@@ -1,0 +1,27 @@
+# 构建输出
+bin/
+obj/
+dist/
+artifacts/
+publish/
+
+# IDE / 编辑器
+.vs/
+.vscode/
+.idea/
+*.user
+*.suo
+*.userprefs
+
+# 运行期产物（便携版写在 exe 同级目录）
+*.log
+SliceArc.settings.json
+
+# 第三方参考源码（7-Zip 源码树，仅本地阅读用）
+.refs/
+.trae/
+
+# 临时文件
+*.tmp
+*.bak
+~$*

@@ -1,0 +1,40 @@
+<Window x:Class="SliceArc.App.Views.AboutWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="关于 超速解压缩"
+        Width="360" SizeToContent="Height"
+        WindowStartupLocation="CenterOwner"
+        ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource B.Window}"
+        Foreground="{DynamicResource B.Text}"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="12"
+        Icon="/Assets/SliceArc.ico">
+
+    <Grid Margin="24,20">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <StackPanel Grid.Row="0" Orientation="Horizontal">
+            <Image Source="/Assets/SliceArc.ico" Width="56" Height="56" VerticalAlignment="Top" />
+            <StackPanel Margin="14,2,0,0" VerticalAlignment="Center">
+                <TextBlock Text="超速解压缩" FontSize="20" FontWeight="SemiBold" />
+                <TextBlock x:Name="VersionText" Text="版本 0.0.0" Margin="0,4,0,0"
+                           Foreground="{DynamicResource B.TextDim}" />
+                <TextBlock Text="LD 制作" Margin="0,6,0,0" FontWeight="SemiBold"
+                           Foreground="{DynamicResource B.TextDim}" />
+            </StackPanel>
+        </StackPanel>
+
+        <TextBlock Grid.Row="1" Margin="0,16,0,0" TextWrapping="Wrap"
+                   Foreground="{DynamicResource B.TextDim}"
+                   Text="分卷压缩包解压 / 压缩工具，基于 7-Zip 引擎。支持 .z01 / .001 / .part1.rar 等分卷格式、零临时文件拖出、解压后自动回收分卷、Windows 11 一级右键菜单。" />
+
+        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
+            <Button Style="{StaticResource PrimaryButton}" Content="确定" Width="84" Height="28"
+                    Click="OnOkClick" IsDefault="True" />
+        </StackPanel>
+    </Grid>
+</Window>

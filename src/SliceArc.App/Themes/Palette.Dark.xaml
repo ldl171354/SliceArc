@@ -1,0 +1,36 @@
+<ResourceDictionary xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+                    xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml">
+
+    <!-- Dark: deep grey surfaces, bright blue accent -->
+    <Color x:Key="C.Window">#FF1E1F22</Color>
+    <Color x:Key="C.Surface">#FF252629</Color>
+    <Color x:Key="C.SurfaceAlt">#FF2A2B2E</Color>
+    <Color x:Key="C.Border">#FF3A3B3F</Color>
+    <Color x:Key="C.BorderSoft">#FF333437</Color>
+    <Color x:Key="C.Text">#FFE4E6EB</Color>
+    <Color x:Key="C.TextDim">#FF9BA0A8</Color>
+    <Color x:Key="C.TextFaint">#FF6B7280</Color>
+    <Color x:Key="C.Accent">#FF4C8DFF</Color>
+    <Color x:Key="C.AccentHover">#FF6BA0FF</Color>
+    <Color x:Key="C.AccentSoft">#FF1E3358</Color>
+    <Color x:Key="C.Hover">#FF2E2F33</Color>
+    <Color x:Key="C.Pressed">#FF38393D</Color>
+    <Color x:Key="C.Selected">#FF1E3358</Color>
+    <Color x:Key="C.Danger">#FFE57373</Color>
+
+    <SolidColorBrush x:Key="B.Window" Color="{StaticResource C.Window}" />
+    <SolidColorBrush x:Key="B.Surface" Color="{StaticResource C.Surface}" />
+    <SolidColorBrush x:Key="B.SurfaceAlt" Color="{StaticResource C.SurfaceAlt}" />
+    <SolidColorBrush x:Key="B.Border" Color="{StaticResource C.Border}" />
+    <SolidColorBrush x:Key="B.BorderSoft" Color="{StaticResource C.BorderSoft}" />
+    <SolidColorBrush x:Key="B.Text" Color="{StaticResource C.Text}" />
+    <SolidColorBrush x:Key="B.TextDim" Color="{StaticResource C.TextDim}" />
+    <SolidColorBrush x:Key="B.TextFaint" Color="{StaticResource C.TextFaint}" />
+    <SolidColorBrush x:Key="B.Accent" Color="{StaticResource C.Accent}" />
+    <SolidColorBrush x:Key="B.AccentHover" Color="{StaticResource C.AccentHover}" />
+    <SolidColorBrush x:Key="B.AccentSoft" Color="{StaticResource C.AccentSoft}" />
+    <SolidColorBrush x:Key="B.Hover" Color="{StaticResource C.Hover}" />
+    <SolidColorBrush x:Key="B.Pressed" Color="{StaticResource C.Pressed}" />
+    <SolidColorBrush x:Key="B.Selected" Color="{StaticResource C.Selected}" />
+    <SolidColorBrush x:Key="B.Danger" Color="{StaticResource C.Danger}" />
+</ResourceDictionary>

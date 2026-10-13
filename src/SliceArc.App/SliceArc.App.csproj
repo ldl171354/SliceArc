@@ -1,0 +1,45 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>WinExe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <UseWPF>true</UseWPF>
+    <RootNamespace>SliceArc.App</RootNamespace>
+    <AssemblyTitle>超速解压缩</AssemblyTitle>
+    <Product>超速解压缩</Product>
+    <Version>0.3.0</Version>
+
+    <!-- The engine lives in Core, but the CCW/RCW plumbing is switched on per
+         process, so the app that hosts it must opt in as well. -->
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+
+    <ApplicationIcon>Assets\SliceArc.ico</ApplicationIcon>
+    <ApplicationManifest>app.manifest</ApplicationManifest>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <ProjectReference Include="..\SliceArc.Core\SliceArc.Core.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Also a resource, so Window.Icon="Assets/SliceArc.ico" resolves. -->
+    <Resource Include="Assets\SliceArc.ico" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- Theme palettes (Themes/Palette.*.xaml) are compiled as BAML automatically
+         by the SDK's default Page glob. App.ApplyTheme loads them via pack:// URI. -->
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- 7z.dll ships with the app. IncludeNativeLibrariesForSelfExtract bundles
+         it into the single-file EXE and extracts it at runtime. -->
+    <None Include="7z.dll" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

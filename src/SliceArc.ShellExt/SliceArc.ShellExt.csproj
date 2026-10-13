@@ -1,0 +1,24 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <EnableComHosting>true</EnableComHosting>
+    <PlatformTarget>x64</PlatformTarget>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <AssemblyName>SliceArc.ShellExt</AssemblyName>
+    <RootNamespace>SliceArc.ShellExt</RootNamespace>
+    <!-- COM hosting is framework-dependent only (NETSDK1128): the four output
+         files sit next to SliceArc.App.exe; target PCs need .NET 8 runtime,
+         and the registrar must skip modern-menu setup when it is absent. -->
+    <CopyLocalLockFileAssemblies>false</CopyLocalLockFileAssemblies>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- Sparse-package manifest + assets travel with the publish output so the
+         registrar can sign and Add-AppxPackage -Register them in place. -->
+    <None Include="Package.appxmanifest" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+    <None Include="Assets\**" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />
+  </ItemGroup>
+
+</Project>

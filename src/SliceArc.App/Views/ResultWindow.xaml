@@ -1,0 +1,77 @@
+<Window x:Class="SliceArc.App.Views.ResultWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="超速解压缩"
+        Width="440" SizeToContent="Height"
+        MaxWidth="520"
+        ResizeMode="NoResize" ShowInTaskbar="False"
+        Background="{DynamicResource B.Window}"
+        Foreground="{DynamicResource B.Text}"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="12"
+        Icon="/Assets/SliceArc.ico">
+
+    <Grid Margin="22,20,22,16">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <!-- headline: flat state badge + title + summary -->
+        <Grid Grid.Row="0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="Auto" />
+                <ColumnDefinition Width="*" />
+            </Grid.ColumnDefinitions>
+
+            <Grid Width="40" Height="40" VerticalAlignment="Top">
+                <Ellipse x:Name="Badge" Fill="{DynamicResource B.AccentSoft}" />
+                <TextBlock x:Name="BadgeGlyph" Text="&#xE73E;" FontFamily="Segoe MDL2 Assets"
+                           FontSize="18" Foreground="{DynamicResource B.Accent}"
+                           HorizontalAlignment="Center" VerticalAlignment="Center" />
+            </Grid>
+
+            <StackPanel Grid.Column="1" Margin="14,0,0,0" VerticalAlignment="Top">
+                <TextBlock x:Name="TitleText" Text="完成" FontSize="14" FontWeight="SemiBold"
+                           TextWrapping="Wrap" />
+                <TextBlock x:Name="SummaryText" Margin="0,5,0,0" TextWrapping="Wrap"
+                           Foreground="{DynamicResource B.TextDim}" />
+            </StackPanel>
+        </Grid>
+
+        <!-- cause + what to do: the headline answer, ahead of the per-file list -->
+        <Border x:Name="AdviceBox" Grid.Row="1" Margin="0,14,0,0" Visibility="Collapsed"
+                BorderBrush="{DynamicResource B.Danger}" BorderThickness="3,0,0,0"
+                Padding="12,1,0,1">
+            <StackPanel>
+                <TextBlock x:Name="ReasonText" TextWrapping="Wrap" FontSize="12.5"
+                           Foreground="{DynamicResource B.Text}" />
+                <TextBlock x:Name="HintText" Margin="0,6,0,0" TextWrapping="Wrap" FontSize="12"
+                           Foreground="{DynamicResource B.TextDim}" />
+            </StackPanel>
+        </Border>
+
+        <!-- error list, only rendered when there is something to say -->
+        <Border x:Name="ErrorBox" Grid.Row="2" Margin="0,14,0,0" Visibility="Collapsed"
+                Background="{DynamicResource B.SurfaceAlt}"
+                BorderBrush="{DynamicResource B.Border}" BorderThickness="1"
+                CornerRadius="5" Padding="10,8">
+            <ItemsControl x:Name="ErrorList"
+                          ScrollViewer.HorizontalScrollBarVisibility="Disabled">
+                <ItemsControl.ItemTemplate>
+                    <DataTemplate>
+                        <TextBlock Text="{Binding}" TextWrapping="Wrap" FontSize="11.5"
+                                   Foreground="{DynamicResource B.TextDim}" Margin="0,1" />
+                    </DataTemplate>
+                </ItemsControl.ItemTemplate>
+            </ItemsControl>
+        </Border>
+
+        <!-- footer -->
+        <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,16,0,0">
+            <Button Style="{StaticResource PrimaryButton}" Content="确定" Width="88" Height="28"
+                    Click="OnOkClick" IsDefault="True" IsCancel="True" />
+        </StackPanel>
+    </Grid>
+</Window>

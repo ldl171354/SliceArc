@@ -1,0 +1,942 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>超速解压缩 —— 解压快，还不占地方</title>
+<meta name="description" content="Windows 上的压缩包工具。解压速度和 7-Zip 一样快，解分卷包时能边解边删、不占双份空间。支持 60 多种格式，免费、免注册。">
+<style>
+/* ==================================================================
+   配色直接对齐软件自身的浅色主题（Minimal.xaml 里的 Light 调色板）
+   ================================================================== */
+:root{
+  --window:#F4F5F7;
+  --surface:#FFFFFF;
+  --surface-alt:#FAFBFC;
+  --border:#E2E5E9;
+  --border-soft:#EDEFF2;
+  --text:#1F2328;
+  --dim:#6B7280;
+  --faint:#A0A6AE;
+  --accent:#2F6FEB;
+  --accent-hover:#2A62D0;
+  --accent-soft:#E8F0FE;
+  --hover:#EDF1F6;
+  --danger:#D64545;
+  --danger-soft:#FDECEC;
+  --green:#1E9E6A;
+  --green-soft:#E7F6EF;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  --shadow-lg:0 8px 24px rgba(16,24,40,.08), 0 2px 6px rgba(16,24,40,.05);
+  --radius:10px;
+  --ui:"Segoe UI","Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,-apple-system,sans-serif;
+}
+
+*{box-sizing:border-box}
+html{scroll-behavior:smooth}
+body{
+  margin:0;
+  font-family:var(--ui);
+  font-size:15px;
+  line-height:1.7;
+  color:var(--text);
+  background:var(--window);
+  -webkit-font-smoothing:antialiased;
+}
+h1,h2,h3{margin:0;line-height:1.28;font-weight:600;letter-spacing:-.01em}
+p{margin:0}
+a{color:inherit;text-decoration:none}
+img,svg{display:block}
+
+.wrap{max-width:1080px;margin:0 auto;padding:0 24px}
+
+/* ---------- 顶栏 ---------- */
+header{
+  position:sticky;top:0;z-index:50;
+  background:rgba(255,255,255,.86);
+  backdrop-filter:saturate(180%) blur(12px);
+  border-bottom:1px solid var(--border-soft);
+}
+.bar{display:flex;align-items:center;gap:12px;height:60px}
+.brand{display:flex;align-items:center;gap:9px;font-weight:600;font-size:16px;letter-spacing:-.01em}
+.brand svg{width:26px;height:26px;flex:none}
+.nav{margin-left:auto;display:flex;align-items:center;gap:26px;font-size:14px}
+.nav a{color:var(--dim);transition:color .15s}
+.nav a:hover{color:var(--text)}
+.nav .cta{
+  background:var(--accent);color:#fff;font-weight:600;
+  padding:7px 16px;border-radius:8px;transition:background .15s;
+}
+.nav .cta:hover{background:var(--accent-hover);color:#fff}
+
+/* ---------- 按钮 ---------- */
+.btn{
+  display:inline-flex;align-items:center;gap:8px;justify-content:center;
+  font-family:inherit;font-size:15px;font-weight:600;
+  padding:11px 22px;border-radius:9px;border:1px solid var(--border);
+  background:var(--surface);color:var(--text);cursor:pointer;
+  transition:background .15s,border-color .15s,box-shadow .15s,transform .1s;
+}
+.btn:hover{background:var(--hover)}
+.btn.hot{background:var(--accent);border-color:var(--accent);color:#fff;box-shadow:var(--shadow)}
+.btn.hot:hover{background:var(--accent-hover);border-color:var(--accent-hover)}
+.btn.sm{padding:8px 16px;font-size:14px}
+.btn svg{width:17px;height:17px;flex:none}
+
+/* ---------- 首屏 ---------- */
+.hero{
+  position:relative;overflow:hidden;
+  background:linear-gradient(180deg,#FFFFFF 0%,var(--window) 100%);
+  border-bottom:1px solid var(--border-soft);
+}
+.hero::before{
+  content:"";position:absolute;top:-260px;right:-180px;width:620px;height:620px;
+  background:radial-gradient(circle,rgba(47,111,235,.10) 0%,rgba(47,111,235,0) 68%);
+  pointer-events:none;
+}
+.hero-in{position:relative;padding:76px 0 84px;max-width:720px}
+.tag{
+  display:inline-flex;align-items:center;gap:8px;
+  background:var(--accent-soft);color:var(--accent);
+  font-size:13px;font-weight:600;padding:5px 12px;border-radius:99px;
+}
+.hero h1{font-size:clamp(32px,5.2vw,50px);margin:20px 0 0;font-weight:600}
+.hero h1 b{color:var(--accent);font-weight:600}
+.hero .lead{font-size:17px;color:var(--dim);margin:20px 0 0;max-width:620px}
+.cta-row{display:flex;flex-wrap:wrap;gap:12px;margin:32px 0 0}
+.mini{display:flex;flex-wrap:wrap;gap:22px;margin:26px 0 0;font-size:13.5px;color:var(--faint)}
+.mini span{display:inline-flex;align-items:center;gap:7px}
+.mini svg{width:15px;height:15px;color:var(--green)}
+
+/* ---------- 通用区块 ---------- */
+section{padding:72px 0}
+section.alt{background:var(--surface);border-top:1px solid var(--border-soft);border-bottom:1px solid var(--border-soft)}
+.head{max-width:660px;margin:0 0 40px}
+.head .kicker{font-size:13px;font-weight:600;color:var(--accent);letter-spacing:.02em}
+.head h2{font-size:clamp(24px,3.4vw,32px);margin:10px 0 0}
+.head p{color:var(--dim);margin:14px 0 0;font-size:16px}
+
+/* ---------- 三张好处卡 ---------- */
+.perks{display:grid;grid-template-columns:repeat(3,1fr);gap:18px}
+.card{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:26px 24px;box-shadow:var(--shadow);
+}
+.ic{
+  width:42px;height:42px;border-radius:11px;display:grid;place-items:center;
+  background:var(--accent-soft);color:var(--accent);margin-bottom:16px;
+}
+.ic svg{width:22px;height:22px}
+.card h3{font-size:17px}
+.card p{color:var(--dim);font-size:14.5px;margin:10px 0 0}
+.card .num{color:var(--accent);font-weight:600}
+
+/* ---------- 省空间对比 ---------- */
+.space{display:grid;grid-template-columns:1fr;gap:16px;max-width:860px}
+.srow{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px 22px;box-shadow:var(--shadow);
+}
+.srow .top{display:flex;align-items:baseline;justify-content:space-between;gap:14px;margin-bottom:12px}
+.srow .name{font-weight:600;font-size:15px}
+.srow .val{font-size:14px;color:var(--dim)}
+.track{height:14px;border-radius:7px;background:var(--surface-alt);border:1px solid var(--border-soft);overflow:hidden}
+.fill{height:100%;width:0;border-radius:7px;transition:width 1.1s cubic-bezier(.22,.7,.25,1)}
+.fill.bad{background:repeating-linear-gradient(45deg,#C9CED6 0 8px,#DDE1E7 8px 16px)}
+.fill.good{background:linear-gradient(90deg,var(--accent) 0%,#5B92F5 100%)}
+.srow.hl{border-color:#C7DAFB;background:linear-gradient(180deg,#FBFDFF 0%,var(--surface) 100%)}
+.srow.hl .name{color:var(--accent)}
+.note{
+  margin:22px 0 0;padding:16px 18px;border-left:3px solid var(--accent);
+  background:var(--accent-soft);border-radius:0 8px 8px 0;font-size:14.5px;color:#2A3A55;
+}
+.note b{color:var(--text)}
+
+/* ---------- 实测数据 ---------- */
+.bench{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:28px 26px;box-shadow:var(--shadow);max-width:860px}
+.bench .brow{margin-bottom:20px}
+.bench .brow:last-of-type{margin-bottom:0}
+.bench .top{display:flex;align-items:baseline;justify-content:space-between;margin-bottom:9px}
+.bench .name{font-weight:600;font-size:15px}
+.bench .time{font-size:20px;font-weight:600;font-variant-numeric:tabular-nums}
+.bench .mine .time{color:var(--accent)}
+.bench .theirs .time{color:var(--faint)}
+.foot{margin:22px 0 0;padding-top:18px;border-top:1px solid var(--border-soft);
+  font-size:13.5px;color:var(--faint)}
+.facts{display:grid;grid-template-columns:repeat(3,1fr);gap:18px;margin-top:18px}
+.fact{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:22px 20px;box-shadow:var(--shadow)}
+.fact .big{font-size:26px;font-weight:600;color:var(--accent);font-variant-numeric:tabular-nums}
+.fact .big em{font-style:normal;font-size:15px;color:var(--dim);margin-left:3px}
+.fact p{font-size:14px;color:var(--dim);margin:8px 0 0}
+
+/* ---------- 功能清单 ---------- */
+.feats{display:grid;grid-template-columns:repeat(3,1fr);gap:16px}
+.feat{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:22px 20px;box-shadow:var(--shadow);transition:box-shadow .18s,transform .18s}
+.feat:hover{box-shadow:var(--shadow-lg);transform:translateY(-2px)}
+.feat .ic{margin-bottom:14px;background:var(--hover);color:var(--dim)}
+.feat h3{font-size:15.5px}
+.feat p{font-size:14px;color:var(--dim);margin:8px 0 0}
+
+/* ---------- 格式 ---------- */
+.fmt-grid{display:grid;grid-template-columns:1fr 1fr;gap:22px;align-items:start}
+.panel{background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:24px;box-shadow:var(--shadow)}
+.panel h3{font-size:16px}
+.panel .sub{font-size:13.5px;color:var(--faint);margin:6px 0 16px}
+.chips{display:flex;flex-wrap:wrap;gap:7px}
+.chip{
+  font-size:13px;padding:5px 11px;border-radius:7px;
+  background:var(--surface-alt);border:1px solid var(--border-soft);color:var(--dim);
+}
+.panel.accent .chip{background:var(--accent-soft);border-color:#D3E2FC;color:var(--accent-hover)}
+.vols{display:grid;gap:10px;margin-top:4px}
+.vol{
+  display:flex;align-items:center;justify-content:space-between;gap:14px;
+  padding:12px 14px;border-radius:8px;background:var(--surface-alt);
+  border:1px solid var(--border-soft);
+}
+.vol code{font-family:ui-monospace,Consolas,"Cascadia Mono",monospace;font-size:13px;color:var(--text)}
+.vol span{font-size:13px;color:var(--faint)}
+
+/* ---------- 界面预览 ---------- */
+.mock{
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  box-shadow:var(--shadow-lg);overflow:hidden;max-width:900px;
+}
+.mock-bar{
+  display:flex;align-items:center;gap:14px;padding:9px 14px;
+  border-bottom:1px solid var(--border-soft);background:var(--surface);
+}
+.dots{display:flex;gap:6px}
+.dots i{width:10px;height:10px;border-radius:50%;background:var(--border)}
+.mock-title{font-size:12.5px;color:var(--faint)}
+.tools{display:flex;gap:4px;padding:8px 12px;border-bottom:1px solid var(--border-soft);background:var(--surface-alt);flex-wrap:wrap}
+.tool{display:inline-flex;align-items:center;gap:6px;font-size:12.5px;color:var(--dim);
+  padding:5px 9px;border-radius:6px;background:var(--surface);border:1px solid var(--border-soft)}
+.tool.on{color:var(--accent);border-color:#CFE0FB;background:var(--accent-soft)}
+.tool svg{width:14px;height:14px}
+.thead,.trow{display:grid;grid-template-columns:2.2fr 1fr 1fr 1.1fr;gap:10px;padding:9px 14px;font-size:12.5px;align-items:center}
+.thead{color:var(--faint);border-bottom:1px solid var(--border-soft);background:var(--surface-alt)}
+.trow{border-bottom:1px solid var(--border-soft)}
+.trow:last-child{border-bottom:0}
+.trow .fname{display:flex;align-items:center;gap:8px;color:var(--text);min-width:0}
+.trow .fname span{overflow:hidden;text-overflow:ellipsis;white-space:nowrap}
+.trow .fname svg{width:15px;height:15px;color:var(--accent);flex:none}
+.trow .m{color:var(--faint);font-variant-numeric:tabular-nums}
+.mock-foot{
+  display:flex;align-items:center;gap:12px;padding:11px 14px;
+  border-top:1px solid var(--border-soft);background:var(--surface-alt);
+}
+.mock-foot .lbl{font-size:12.5px;color:var(--faint);white-space:nowrap}
+.mtrack{flex:1;height:7px;border-radius:4px;background:var(--hover);overflow:hidden}
+.mfill{height:100%;width:64%;border-radius:4px;background:linear-gradient(90deg,var(--accent),#5B92F5)}
+
+/* ---------- 下载 ---------- */
+.dl{display:grid;grid-template-columns:1fr 1fr;gap:20px}
+.dcard{
+  background:var(--surface);border:1px solid var(--border);border-radius:12px;
+  padding:28px 26px;box-shadow:var(--shadow);display:flex;flex-direction:column;
+}
+.dcard.rec{border-color:#C7DAFB;box-shadow:var(--shadow-lg);position:relative}
+.dcard.rec::after{
+  content:"推荐";position:absolute;top:-11px;left:26px;
+  background:var(--accent);color:#fff;font-size:12px;font-weight:600;
+  padding:3px 11px;border-radius:99px;
+}
+.dcard h3{font-size:18px}
+.dcard .desc{font-size:14.5px;color:var(--dim);margin:10px 0 0;flex:1}
+.dcard .meta{display:flex;gap:16px;font-size:13px;color:var(--faint);margin:18px 0 20px;flex-wrap:wrap}
+.dcard .btn{width:100%}
+
+.strip{
+  margin-top:22px;background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:20px 24px;display:flex;align-items:center;gap:18px;flex-wrap:wrap;box-shadow:var(--shadow);
+}
+.strip .txt{flex:1;min-width:240px}
+.strip .txt b{display:block;font-size:15px}
+.strip .txt p{font-size:13.5px;color:var(--dim);margin-top:3px}
+.strip svg.gh{width:26px;height:26px;color:var(--text);flex:none}
+
+/* ---------- 底栏 ---------- */
+footer{background:var(--surface);border-top:1px solid var(--border-soft);padding:34px 0;font-size:13.5px;color:var(--faint)}
+footer .fbar{display:flex;align-items:center;gap:16px;flex-wrap:wrap}
+footer .fbar .brand{font-size:14px;color:var(--text)}
+footer .fbar a{margin-left:auto;color:var(--dim)}
+footer .fbar a:hover{color:var(--accent)}
+
+/* ==================================================================
+   动效
+   入场用 translate 独立属性，悬停用 transform —— 两者互不干扰
+   ================================================================== */
+.rv{
+  opacity:0;translate:0 18px;
+  transition:opacity .62s ease,translate .62s cubic-bezier(.22,.7,.25,1),
+             transform .2s ease,box-shadow .2s ease,border-color .2s ease;
+}
+.rv.in{opacity:1;translate:0 0}
+
+/* 标题/导语左滑入场 */
+.head .kicker,.head h2,.head p{
+  opacity:0;transform:translateX(-16px);
+  transition:opacity .5s ease,transform .58s cubic-bezier(.22,.7,.25,1);
+}
+.head.in .kicker{opacity:1;transform:none}
+.head.in h2{opacity:1;transform:none;transition-delay:.09s}
+.head.in p{opacity:1;transform:none;transition-delay:.18s}
+
+/* 网格依次入场 */
+.perks>.card:nth-child(3n+2),.facts>.fact:nth-child(3n+2),
+.feats>.feat:nth-child(3n+2),.scenes>.scene:nth-child(3n+2),
+.scenes3>.card:nth-child(3n+2){transition-delay:.09s}
+.perks>.card:nth-child(3n+3),.facts>.fact:nth-child(3n+3),
+.feats>.feat:nth-child(3n+3),.scenes>.scene:nth-child(3n+3),
+.scenes3>.card:nth-child(3n+3){transition-delay:.18s}
+.scenes>.scene:nth-child(4){transition-delay:.07s}
+.dcard:nth-child(2){transition-delay:.1s}
+
+/* 卡片悬停：抬起 + 描边转强调色；图标轻弹 */
+.card:hover,.feat:hover,.scene:hover{
+  transform:translateY(-4px);box-shadow:var(--shadow-lg);border-color:#C7DAFB;
+}
+@keyframes iconPop{0%{transform:scale(1)}45%{transform:scale(1.2)}100%{transform:scale(1)}}
+.feat:hover .ic svg{animation:iconPop .42s cubic-bezier(.3,1.4,.5,1)}
+.feat:hover .ic,.card:hover .ic{background:var(--accent-soft);color:var(--accent)}
+
+/* 顶栏闪电：缓慢呼吸的光晕 */
+@keyframes boltGlow{
+  0%,100%{filter:drop-shadow(0 0 0 rgba(255,198,61,0))}
+  50%{filter:drop-shadow(0 0 7px rgba(255,198,61,.65))}
+}
+.brand svg{animation:boltGlow 3.6s ease-in-out infinite}
+
+/* 进度条上的流光 */
+.bench .fill.good{position:relative;overflow:hidden}
+.bench .fill.good::after{
+  content:"";position:absolute;inset:0;
+  background:linear-gradient(90deg,transparent,rgba(255,255,255,.6),transparent);
+  animation:shine 2.8s ease-in-out infinite;
+}
+@keyframes shine{0%{transform:translateX(-100%)}55%,100%{transform:translateX(220%)}}
+
+/* 两条赛跑：我们的先出发 */
+.bench .brow.mine .fill{transition-delay:.12s}
+.bench .brow.theirs .fill{transition-delay:.5s}
+
+/* 特色功能的磁盘图解 */
+.diagram{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:24px;box-shadow:var(--shadow);max-width:900px;margin-bottom:20px;
+}
+.dg-head{display:flex;align-items:center;justify-content:space-between;gap:14px;flex-wrap:wrap;margin-bottom:16px}
+.dg-title{font-weight:600;font-size:15px}
+.dg-legend{display:flex;align-items:center;gap:18px;font-size:13px;color:var(--dim)}
+.dg-legend i{width:10px;height:10px;border-radius:3px;display:inline-block;margin-right:6px}
+.dg-legend .used{background:#F3D9A8}
+.dg-legend .freed{background:#8FDCBC}
+.diskblocks{display:grid;grid-template-columns:repeat(12,1fr);gap:4px}
+.diskblocks i{
+  height:32px;border-radius:5px;background:#F3D9A8;
+  animation:volRelease 7.2s linear infinite;
+  animation-delay:calc(var(--i) * .45s - 7.2s);
+}
+@keyframes volRelease{
+  0%,6%{background:#F3D9A8}
+  20%,100%{background:#8FDCBC}
+}
+.dg-foot{margin:16px 0 0;font-size:13.5px;color:var(--faint)}
+
+/* 使用场景卡 */
+.scenes{display:grid;grid-template-columns:1fr 1fr;gap:16px}
+.scene{
+  background:var(--surface);border:1px solid var(--border);border-radius:var(--radius);
+  padding:24px 22px;box-shadow:var(--shadow);
+}
+.snum{
+  display:inline-grid;place-items:center;height:24px;padding:0 9px;border-radius:7px;
+  background:var(--accent-soft);color:var(--accent);font-size:12.5px;font-weight:600;
+  font-variant-numeric:tabular-nums;margin-bottom:14px;
+}
+.scene h3{font-size:15.5px}
+.scene p{font-size:14px;color:var(--dim);margin:8px 0 0}
+
+/* 特色段落的场景卡（三列） */
+.scenes3{display:grid;grid-template-columns:repeat(3,1fr);gap:16px;margin-top:20px}
+
+/* 界面预览里的进度条：由脚本持续推进 */
+.mfill{transition:width .13s linear}
+
+@media (prefers-reduced-motion:reduce){
+  *{transition:none!important;animation:none!important}
+  .rv{opacity:1;translate:0 0}
+  .head .kicker,.head h2,.head p{opacity:1;transform:none}
+  html{scroll-behavior:auto}
+}
+
+/* ---------- 响应式 ---------- */
+@media (max-width:900px){
+  .perks,.facts,.feats,.scenes3{grid-template-columns:1fr 1fr}
+  .fmt-grid,.dl{grid-template-columns:1fr}
+}
+@media (max-width:860px){
+  .nav a:not(.cta){display:none}
+}
+@media (max-width:768px){
+  .diskblocks{grid-template-columns:repeat(6,1fr)}
+}
+@media (max-width:640px){
+  section{padding:54px 0}
+  .perks,.facts,.feats,.scenes,.scenes3{grid-template-columns:1fr}
+  .hero-in{padding:56px 0 62px}
+  .thead,.trow{grid-template-columns:1.7fr 1fr 1fr;font-size:12px}
+  .thead .m3,.trow .m3{display:none}
+  .mini{gap:14px}
+  .strip{flex-direction:column;align-items:flex-start}
+  footer .fbar a{margin-left:0}
+}
+</style>
+</head>
+<body>
+
+<header>
+  <div class="wrap bar">
+    <a class="brand" href="#top">
+      <svg viewBox="0 0 24 24" aria-hidden="true">
+        <defs>
+          <linearGradient id="boltGold" x1="0" y1="0" x2="0" y2="1">
+            <stop offset="0" stop-color="#FFE07A"/>
+            <stop offset=".55" stop-color="#FFC63D"/>
+            <stop offset="1" stop-color="#F0A81E"/>
+          </linearGradient>
+        </defs>
+        <path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z" fill="url(#boltGold)"/>
+      </svg>
+      超速解压缩
+    </a>
+    <nav class="nav">
+      <a href="#why">核心特点</a>
+      <a href="#space">节省空间</a>
+      <a href="#feats">功能</a>
+      <a href="#formats">支持格式</a>
+      <a href="#look">界面预览</a>
+      <a class="cta dl-link" data-kind="portable" href="#" target="_blank" rel="noopener">免费下载</a>
+    </nav>
+  </div>
+</header>
+
+<!-- ==================== 首屏 ==================== -->
+<div class="hero" id="top">
+  <div class="wrap hero-in">
+    <span class="tag rv">支持 Windows 10 / 11 · 完全免费 · 无需注册</span>
+    <h1 class="rv">解压<b>快</b>，占用<b>小</b></h1>
+    <p class="lead rv">
+      一款运行在 Windows 上的压缩与解压工具。解压速度与 7-Zip 相当；
+      处理分卷压缩包时，会在解压过程中释放已用完的分卷，磁盘空间紧张也能顺利完成。
+    </p>
+    <div class="cta-row rv">
+      <a class="btn hot dl-link" data-kind="portable" href="#" target="_blank" rel="noopener">
+        <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round" aria-hidden="true">
+          <path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 19h16"/>
+        </svg>
+        免费下载
+      </a>
+      <a class="btn" href="#why">了解功能</a>
+    </div>
+    <div class="mini rv">
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>免安装，单个文件即可运行</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>无广告弹窗</span>
+      <span><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.4" stroke-linecap="round" stroke-linejoin="round"><path d="M20 6L9 17l-5-5"/></svg>无需管理员权限</span>
+    </div>
+  </div>
+</div>
+
+<!-- ==================== 三张好处卡 ==================== -->
+<section id="why">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">核心特点</div>
+      <h2>解决三个最常见的问题</h2>
+    </div>
+    <div class="perks">
+      <div class="card rv">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M13 2L4.5 13.5H11l-1 8.5 8.5-11.5H12l1-8.5z"/></svg>
+        </div>
+        <h3>速度与 7-Zip 相当</h3>
+        <p>实测解压一个 229 MB 的压缩包用时 <span class="num">3.04 秒</span>；相同条件下 7-Zip 为 3.03 秒，两者速度基本持平。</p>
+      </div>
+      <div class="card rv">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="2.5" y="5" width="19" height="9" rx="1.8"/><rect x="2.5" y="15" width="19" height="5" rx="1.8"/><path d="M6.5 9.5h2M6.5 17.5h2"/></svg>
+        </div>
+        <h3>解压不占用双份空间</h3>
+        <p>多数工具需要先腾出一整份空间作为临时区。我们在解压的同时释放已用完的分卷，<span class="num">只需一份空间</span>即可完成。</p>
+      </div>
+      <div class="card rv">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 6.5A2.5 2.5 0 016.5 4h3l2 2.5h6A2.5 2.5 0 0120 9v8.5A2.5 2.5 0 0117.5 20h-11A2.5 2.5 0 014 17.5z"/></svg>
+        </div>
+        <h3>常见格式全面支持</h3>
+        <p>7z、zip、rar、tar、gz、iso、xz、zst…… 共 <span class="num">60 余种</span>格式，日常能遇到的压缩包基本都能直接打开。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 核心特色：边解压边释放 ==================== -->
+<section class="alt" id="space">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">核心特色</div>
+      <h2>边解压，边释放已用完的分卷</h2>
+      <p>这是超速解压缩与多数解压工具最大的不同：解压过程中逐卷释放已经用完的分卷，全程只占用一份数据的空间。</p>
+    </div>
+
+    <div class="diagram rv">
+      <div class="dg-head">
+        <span class="dg-title">解压推进时，分卷被逐卷释放</span>
+        <span class="dg-legend">
+          <span><i class="used"></i>分卷仍在占用</span>
+          <span><i class="freed"></i>已释放</span>
+        </span>
+      </div>
+      <div class="diskblocks">
+        <i style="--i:0"></i><i style="--i:1"></i><i style="--i:2"></i><i style="--i:3"></i>
+        <i style="--i:4"></i><i style="--i:5"></i><i style="--i:6"></i><i style="--i:7"></i>
+        <i style="--i:8"></i><i style="--i:9"></i><i style="--i:10"></i><i style="--i:11"></i>
+      </div>
+      <p class="dg-foot">每解完一卷，该卷占用的磁盘空间立即被回收。解压全程的峰值占用因此始终维持在一份数据的量级，而不是两份。</p>
+    </div>
+
+    <div class="space">
+      <div class="srow rv">
+        <div class="top">
+          <span class="name">其他工具：先全部解出，再清理临时文件</span>
+          <span class="val">约需 2 倍空间</span>
+        </div>
+        <div class="track"><div class="fill bad" data-w="100%"></div></div>
+      </div>
+      <div class="srow hl rv">
+        <div class="top">
+          <span class="name">超速解压缩：边解压，边释放已用完的分卷</span>
+          <span class="val">只需 1 倍空间</span>
+        </div>
+        <div class="track"><div class="fill good" data-w="50%"></div></div>
+      </div>
+    </div>
+
+    <div class="scenes3">
+      <div class="card rv">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3.5" y="4.5" width="17" height="11" rx="1.8"/><path d="M2 18.5h20"/></svg>
+        </div>
+        <h3>笔记本只有 128 GB 系统盘</h3>
+        <p>下载了一个 15 GB 的分卷包，而系统盘只剩 20 GB。其他工具解压到一半就会提示空间不足，超速解压缩可以正常解完。</p>
+      </div>
+      <div class="card rv">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l8.5 4.5v9L12 21l-8.5-3.5v-9z"/><path d="M3.5 7.5L12 12l8.5-4.5M12 12v9"/></svg>
+        </div>
+        <h3>硬盘快满了，但分卷还不能删</h3>
+        <p>需要解压一个备份包，同时必须保留原始分卷以备他用。边解压边释放，解压结束时这些分卷已经腾出了空间。</p>
+      </div>
+      <div class="card rv">
+        <div class="ic">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="6" width="18" height="12" rx="2"/><path d="M7 10h10M7 15h.01M11 15h.01"/></svg>
+        </div>
+        <h3>只有一块硬盘，没有周转空间</h3>
+        <p>没有第二块盘可以临时存放数据。省下的那一份空间可以继续放别的文件，不必为解压专门腾地方。</p>
+      </div>
+    </div>
+
+    <div class="note rv" style="border-left-color:var(--green);background:var(--green-soft);color:#12513A">
+      <b>担心误删？</b>最后几卷默认保留，解压完成前不会删除，也可以在设置中自行调整。
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 实测数据 ==================== -->
+<section id="bench">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">性能实测</div>
+      <h2>与 7-Zip 的速度对比</h2>
+      <p>同一个压缩包、同一台电脑，分别实测。</p>
+    </div>
+
+    <div class="bench rv">
+      <div class="brow mine">
+        <div class="top">
+          <span class="name">超速解压缩</span>
+          <span class="time"><span data-count="3.04" data-dec="2">0.00</span> 秒</span>
+        </div>
+        <div class="track"><div class="fill good" data-w="96.4%"></div></div>
+      </div>
+      <div class="brow theirs">
+        <div class="top">
+          <span class="name">7-Zip（官方原版）</span>
+          <span class="time"><span data-count="3.03" data-dec="2">0.00</span> 秒</span>
+        </div>
+        <div class="track"><div class="fill bad" data-w="96.1%"></div></div>
+      </div>
+      <p class="foot">
+        测试对象为 229 MB 的 7z 压缩包（内含 22 个文件），执行完整性校验（只读不写），冷启动各测一次。
+        两者相差 0.01 秒，速度基本持平。
+      </p>
+    </div>
+
+    <div class="note rv">
+      <b>实际体验：</b>解压几百兆的压缩包几乎感觉不到等待；连续处理多个压缩包时也不会积压，
+      界面上始终有进度反馈。速度持平的意义在于，换成超速解压缩不会牺牲原有的效率。
+    </div>
+
+    <div class="facts">
+      <div class="fact rv">
+        <div class="big"><span data-count="0.19" data-dec="2">0.00</span><em>秒</em></div>
+        <p>双击即可启动，几乎无需等待</p>
+      </div>
+      <div class="fact rv">
+        <div class="big"><span data-count="60" data-dec="0">0</span><em>多种</em></div>
+        <p>可直接打开的压缩包格式数量</p>
+      </div>
+      <div class="fact rv">
+        <div class="big">全程<em>流畅</em></div>
+        <p>进度与剩余时间平滑更新，界面不卡顿</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 使用场景 ==================== -->
+<section class="alt" id="scenes">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">使用场景</div>
+      <h2>这些情况，你大概都遇到过</h2>
+      <p>下面几个场景都来自日常使用，功能就是为它们准备的。</p>
+    </div>
+    <div class="scenes">
+      <div class="scene rv">
+        <span class="snum">01</span>
+        <h3>收到一个带密码的压缩包</h3>
+        <p>无法判断是密码不对，还是文件本身损坏。超速解压缩会明确提示需要正确的口令，而不是笼统地报「文件损坏」，你可以放心重试。</p>
+      </div>
+      <div class="scene rv">
+        <span class="snum">02</span>
+        <h3>不想打开程序，只想尽快解压</h3>
+        <p>在资源管理器里对着压缩包直接右键即可解压，无需先打开主界面；Windows 11 的新版右键菜单同样支持。</p>
+      </div>
+      <div class="scene rv">
+        <span class="snum">03</span>
+        <h3>大文件需要发给同事</h3>
+        <p>先把压缩包切成若干小份，再分批上传网盘或作为邮件附件发送，对方解压后得到的就是完整文件。</p>
+      </div>
+      <div class="scene rv">
+        <span class="snum">04</span>
+        <h3>一次要处理好几个压缩包</h3>
+        <p>可以挂到后台批量处理，结束后弹出结果确认并播放提示音，不必一直守着进度条。</p>
+      </div>
+      <div class="scene rv">
+        <span class="snum">05</span>
+        <h3>只想从压缩包里取一个文件</h3>
+        <p>在文件列表中定位到目标文件，直接拖到资源管理器即可取出，不必先把整个压缩包解开。</p>
+      </div>
+      <div class="scene rv">
+        <span class="snum">06</span>
+        <h3>文件要发给别人，但不希望被随意查看</h3>
+        <p>打包时设置一个密码即可，采用高强度加密，对方没有密码就无法打开。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 功能 ==================== -->
+<section id="feats">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">功能</div>
+      <h2>日常实用功能</h2>
+    </div>
+    <div class="feats">
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M9 4.5l-6 6 6 6M15 4.5l6 6-6 6"/></svg></div>
+        <h3>资源管理器右键菜单</h3>
+        <p>在压缩包上直接右键即可解压，无需先打开主程序。Windows 11 新版右键菜单同样支持。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="10.5" width="16" height="10" rx="2.2"/><path d="M8 10.5V7.5a4 4 0 018 0v3"/></svg></div>
+        <h3>支持加密压缩包</h3>
+        <p>遇到加密压缩包会提示输入密码；密码错误时明确提示，而不是笼统地报「文件损坏」。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M7 3.5h7l4.5 4.5v12a1 1 0 01-1 1H7a1 1 0 01-1-1V4.5a1 1 0 011-1z"/><path d="M14 3.5V8h4.5"/><path d="M11.5 12.5v4m-2-2h4"/></svg></div>
+        <h3>压缩时可设置密码</h3>
+        <p>打包时可直接设置密码，采用高强度加密，没有密码无法打开。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="3" y="4" width="18" height="5" rx="1.6"/><rect x="3" y="12" width="18" height="5" rx="1.6"/><path d="M7 6.5h1M7 14.5h1"/></svg></div>
+        <h3>支持分卷压缩</h3>
+        <p>可将一个较大的压缩包拆分为若干小份，便于分批上传网盘或发送邮件。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 3.5a8.5 8.5 0 010 17"/><path d="M3.5 12h17"/></svg></div>
+        <h3>四种界面主题</h3>
+        <p>提供浅色、深蓝、暗色、暖色四种主题，可按使用环境自行切换。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8.5"/><path d="M12 8v4.5"/><path d="M12 16h.01"/></svg></div>
+        <h3>出错提示清晰可读</h3>
+        <p>不再显示晦涩的错误代码，而是用中文说明「出现了什么问题」以及「应当如何处理」。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div>
+        <h3>压缩包校验</h3>
+        <p>可一次拖入多个压缩包逐个校验完整性。每个文件都做 CRC 校验，损坏时会精确指出是哪一项、问题出在哪里，下载大文件后确认是否完整很方便。</p>
+      </div>
+      <div class="feat rv">
+        <div class="ic"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7h9M4 12h16M4 17h7"/><path d="M17.5 5.5l2.5 1.8-2.5 1.8"/></svg></div>
+        <h3>批量重命名</h3>
+        <p>内置批量重命名工具：按规则统一改名，能识别分卷压缩包的连续编号；改名前可预览、逐项勾选，误操作还能一键撤销。</p>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 格式 ==================== -->
+<section class="alt" id="formats">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">支持格式</div>
+      <h2>支持解压与压缩的格式</h2>
+      <p>以下格式均可直接解压，无需安装其他软件。</p>
+    </div>
+    <div class="fmt-grid">
+      <div class="panel accent rv">
+        <h3>支持解压的格式</h3>
+        <p class="sub">60 余种，覆盖日常常见压缩包</p>
+        <div class="chips">
+          <span class="chip">7z</span><span class="chip">zip</span><span class="chip">rar</span>
+          <span class="chip">tar</span><span class="chip">gz</span><span class="chip">tgz</span>
+          <span class="chip">bz2</span><span class="chip">xz</span><span class="chip">zst</span>
+          <span class="chip">iso</span><span class="chip">cab</span><span class="chip">wim</span>
+          <span class="chip">msi</span><span class="chip">dmg</span><span class="chip">lzh</span>
+          <span class="chip">arj</span><span class="chip">cpio</span><span class="chip">rpm</span>
+          <span class="chip">deb</span><span class="chip">apk</span><span class="chip">jar</span>
+          <span class="chip">vhd</span><span class="chip">squashfs</span><span class="chip">…</span>
+        </div>
+      </div>
+      <div class="panel rv">
+        <h3>支持压缩的格式</h3>
+        <p class="sub">可新建以下格式的压缩包</p>
+        <div class="chips">
+          <span class="chip">7z</span><span class="chip">zip</span><span class="chip">tar</span>
+          <span class="chip">gz</span><span class="chip">bz2</span><span class="chip">xz</span>
+          <span class="chip">zst</span><span class="chip">wim</span>
+        </div>
+        <p class="sub" style="margin-top:22px">支持以下常见分卷命名方式</p>
+        <div class="vols">
+          <div class="vol"><code>名字.7z.001 / .002 / .003…</code><span>数字分片</span></div>
+          <div class="vol"><code>名字.z01 / .z02 + 名字.zip</code><span>zip 分卷</span></div>
+          <div class="vol"><code>名字.part1.rar / part2.rar</code><span>rar 分卷</span></div>
+          <div class="vol"><code>名字.rar + 名字.r00 / r01</code><span>旧式 rar 分卷</span></div>
+        </div>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 界面 ==================== -->
+<section id="look">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">界面</div>
+      <h2>界面简洁，打开即可上手</h2>
+      <p>顶部为功能按钮，中间是文件列表，进度显示在底部。</p>
+    </div>
+
+    <div class="mock rv">
+      <div class="mock-bar">
+        <div class="dots"><i></i><i></i><i></i></div>
+        <span class="mock-title">超速解压缩</span>
+      </div>
+      <div class="tools">
+        <span class="tool on"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A1.5 1.5 0 015.5 6h3l2 2.5h8A1.5 1.5 0 0120 10v7.5a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 17.5z"/></svg>打开</span>
+        <span class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><rect x="4" y="4" width="16" height="16" rx="2"/><path d="M4 9h16"/></svg>压缩</span>
+        <span class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M12 4v10m0 0l-4-4m4 4l4-4"/><path d="M5 19h14"/></svg>解压到…</span>
+        <span class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M5 6h14M5 12h14M5 18h9"/></svg>快速解压</span>
+        <span class="tool"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><circle cx="12" cy="12" r="8"/><path d="M8.5 12.5l2.5 2.5 4.5-5"/></svg>测试</span>
+        <span class="tool" style="margin-left:auto">设置</span>
+      </div>
+      <div class="thead">
+        <span>名称</span><span>大小</span><span class="m3">压缩后</span><span>类型</span>
+      </div>
+      <div class="trow">
+        <span class="fname"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M4 7.5A1.5 1.5 0 015.5 6h3l2 2.5h8A1.5 1.5 0 0120 10v7.5a1.5 1.5 0 01-1.5 1.5h-13A1.5 1.5 0 014 17.5z"/></svg><span>照片备份</span></span>
+        <span class="m">1.8 GB</span><span class="m m3">1.6 GB</span><span class="m">文件夹</span>
+      </div>
+      <div class="trow">
+        <span class="fname"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h7l5 5V20a1 1 0 01-1 1H6a1 1 0 01-1-1V4.5a1 1 0 011-1z"/><path d="M13 3.5V9h5"/></svg><span>项目资料.zip</span></span>
+        <span class="m">264 MB</span><span class="m m3">198 MB</span><span class="m">ZIP</span>
+      </div>
+      <div class="trow">
+        <span class="fname"><svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M6 3.5h7l5 5V20a1 1 0 01-1 1H6a1 1 0 01-1-1V4.5a1 1 0 011-1z"/><path d="M13 3.5V9h5"/></svg><span>系统镜像.iso</span></span>
+        <span class="m">4.2 GB</span><span class="m m3">4.2 GB</span><span class="m">ISO</span>
+      </div>
+      <div class="mock-foot">
+        <span class="lbl">正在解压…</span>
+        <div class="mtrack"><div class="mfill"></div></div>
+        <span class="lbl" id="mockPct">64%</span>
+      </div>
+    </div>
+  </div>
+</section>
+
+<!-- ==================== 下载 ==================== -->
+<section class="alt" id="download">
+  <div class="wrap">
+    <div class="head rv">
+      <div class="kicker">下载</div>
+      <h2>选择下载版本</h2>
+      <p>两个版本功能完全一致，按使用习惯选择即可。</p>
+    </div>
+    <div class="dl">
+      <div class="dcard rec rv">
+        <h3>便携版</h3>
+        <p class="desc">单个可执行文件，双击即可运行，无需安装，也不需要管理员权限。放在 U 盘中可随身携带。</p>
+        <div class="meta"><span>约 69 MB</span><span>免安装</span><span>Windows 10 / 11 64 位</span></div>
+        <a class="btn hot dl-link" data-kind="portable" href="#" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 19h16"/></svg>
+          下载便携版
+        </a>
+      </div>
+      <div class="dcard rv">
+        <h3>安装版</h3>
+        <p class="desc">安装后会在资源管理器右键菜单中增加「超速解压缩」，可直接对压缩包右键解压；卸载时会自动清理干净。</p>
+        <div class="meta"><span>约 65 MB</span><span>带右键菜单</span><span>Windows 10 / 11 64 位</span></div>
+        <a class="btn dl-link" data-kind="setup" href="#" target="_blank" rel="noopener">
+          <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2.1" stroke-linecap="round" stroke-linejoin="round"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 19h16"/></svg>
+          下载安装版
+        </a>
+      </div>
+    </div>
+
+    <div class="strip rv">
+      <svg class="gh" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+        <path d="M12 2C6.48 2 2 6.58 2 12.23c0 4.51 2.87 8.34 6.84 9.7.5.09.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.57 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 015 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.8-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.59.69.49A10.24 10.24 0 0022 12.23C22 6.58 17.52 2 12 2z"/>
+      </svg>
+      <div class="txt">
+        <b>源码与新版本均发布于 GitHub</b>
+        <p>欢迎查看实现方式，或提出建议与反馈。</p>
+      </div>
+      <a id="releases-link" class="btn sm" href="#" target="_blank" rel="noopener">打开 GitHub</a>
+    </div>
+  </div>
+</section>
+
+<footer>
+  <div class="wrap fbar">
+    <span class="brand">超速解压缩</span>
+    <span>·</span>
+    <span>完全免费</span>
+    <a id="releases-link-2" href="#" target="_blank" rel="noopener">GitHub</a>
+  </div>
+</footer>
+
+<script>
+/* ------------------------------------------------------------------
+   下载地址集中在 REPO 里改一处即可。
+   当前为占位地址 —— GitHub 仓库建好后把 OWNER/SliceArc 换掉。
+   ------------------------------------------------------------------ */
+const REPO = "https://github.com/OWNER/SliceArc";
+const RELEASES = REPO + "/releases/latest";
+const ASSET = {
+  portable: REPO + "/releases/latest/download/SliceArc.App.exe",
+  setup:    REPO + "/releases/latest/download/SliceArcSetup-0.3.0-x64.exe"
+};
+
+document.querySelectorAll(".dl-link").forEach(function (a) {
+  a.href = ASSET[a.dataset.kind] || RELEASES;
+});
+document.getElementById("releases-link").href = REPO;
+document.getElementById("releases-link-2").href = REPO;
+
+/* ---------- 入场动画 ----------
+   用「进入视口就显示」的位置判断，而不是 IntersectionObserver：
+   逻辑直白、可预期，不会因为观察容器选错而漏掉任何一块。 */
+
+const reduce = window.matchMedia("(prefers-reduced-motion: reduce)").matches;
+
+/* 元素第一次露出来时才跑的动画：进度条填充 + 数字滚动 */
+function playAnim(el) {
+  el.querySelectorAll(".fill[data-w]").forEach(function (bar) {
+    requestAnimationFrame(function () { bar.style.width = bar.dataset.w; });
+  });
+
+  el.querySelectorAll("[data-count]").forEach(function (n) {
+    if (n.dataset.done) return;
+    n.dataset.done = "1";
+    const target = parseFloat(n.dataset.count);
+    const dec = parseInt(n.dataset.dec || "0", 10);
+    if (reduce) { n.textContent = target.toFixed(dec); return; }
+    const t0 = performance.now(), dur = 1000;
+    (function step(now) {
+      const p = Math.min(1, (now - t0) / dur);
+      n.textContent = (target * (1 - Math.pow(1 - p, 3))).toFixed(dec);
+      if (p < 1) requestAnimationFrame(step);
+    })(t0);
+  });
+}
+
+function reveal(el) {
+  if (el.classList.contains("in")) return;
+  el.classList.add("in");
+  playAnim(el);
+}
+
+/* 首屏不等滚动，按顺序逐个露出来 */
+function heroIn() {
+  document.querySelectorAll(".hero .rv").forEach(function (el, i) {
+    setTimeout(function () { reveal(el); }, reduce ? 0 : 70 * i);
+  });
+}
+
+/* 其余元素：顶边进入视口下方 92% 处就算「看到了」 */
+function sweep() {
+  const limit = window.innerHeight * 0.92;
+  document.querySelectorAll(".rv:not(.in)").forEach(function (el) {
+    if (el.closest(".hero")) return;          // 首屏归 heroIn 管
+    if (el.getBoundingClientRect().top < limit) reveal(el);
+  });
+}
+
+let queued = false;
+function onScroll() {
+  if (queued) return;
+  queued = true;
+  requestAnimationFrame(function () { queued = false; sweep(); });
+}
+
+window.addEventListener("load", function () { heroIn(); sweep(); });
+window.addEventListener("scroll", onScroll, { passive: true });
+window.addEventListener("resize", onScroll);
+sweep();
+
+/* ---------- 界面预览里的进度条：持续推进，让界面看起来是「活的」 ---------- */
+(function () {
+  const fill = document.querySelector(".mfill");
+  const pct = document.getElementById("mockPct");
+  if (!fill || !pct || reduce) return;
+  let v = 64, dir = 1;
+  setInterval(function () {
+    v += dir * (0.6 + Math.random() * 2.2);
+    if (v >= 96) { v = 96; dir = -1; }
+    if (v <= 8) { v = 8; dir = 1; }
+    fill.style.width = v.toFixed(1) + "%";
+    pct.textContent = Math.round(v) + "%";
+  }, 160);
+})();
+</script>
+</body>
+</html>

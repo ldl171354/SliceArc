@@ -1,0 +1,81 @@
+﻿<?xml version="1.0" encoding="utf-8"?>
+<Package
+  xmlns="http://schemas.microsoft.com/appx/manifest/foundation/windows10"
+  xmlns:rescap="http://schemas.microsoft.com/appx/manifest/foundation/windows10/restrictedcapabilities"
+  xmlns:com="http://schemas.microsoft.com/appx/manifest/com/windows10"
+  xmlns:desktop4="http://schemas.microsoft.com/appx/manifest/desktop/windows10/4"
+  xmlns:desktop5="http://schemas.microsoft.com/appx/manifest/desktop/windows10/5"
+  xmlns:uap="http://schemas.microsoft.com/appx/manifest/uap/windows10"
+  xmlns:uap10="http://schemas.microsoft.com/appx/manifest/uap/windows10/10"
+  IgnorableNamespaces="rescap com desktop4 desktop5 uap uap10">
+
+  <!--
+    Sparse package: gives the classic portable app a package identity so the
+    Windows 11 modern context menu will host our IExplorerCommand. The manifest
+    lives next to SliceArc.App.exe and is packed and signed by the registrar;
+    Publisher here must match the signing certificate's subject.
+  -->
+  <Identity
+    Name="SliceArc.ContextMenu"
+    ProcessorArchitecture="x64"
+    Publisher="CN=SliceArc"
+    Version="1.0.0.0" />
+
+  <Properties>
+    <DisplayName>超速解压缩 右键菜单</DisplayName>
+    <PublisherDisplayName>LD</PublisherDisplayName>
+    <Logo>Assets\Logo.png</Logo>
+    <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
+  </Properties>
+
+  <Resources>
+    <Resource Language="zh-CN" />
+  </Resources>
+
+  <Dependencies>
+    <TargetDeviceFamily Name="Windows.Desktop" MinVersion="10.0.19041.0" MaxVersionTested="10.0.26100.0" />
+  </Dependencies>
+
+  <Capabilities>
+    <rescap:Capability Name="runFullTrust" />
+  </Capabilities>
+
+  <Applications>
+    <Application Id="SliceArcContextMenu" Executable="SliceArc.App.exe" EntryPoint="Windows.FullTrustApplication">
+      <uap:VisualElements
+        DisplayName="超速解压缩 右键菜单"
+        Description="超速解压缩 现代右键菜单扩展"
+        Square150x150Logo="Assets\Logo.png"
+        Square44x44Logo="Assets\Logo.png"
+        BackgroundColor="transparent" />
+      <Extensions>
+        <com:Extension Category="windows.comServer">
+          <com:ComServer>
+            <com:SurrogateServer DisplayName="超速解压缩 右键菜单">
+              <com:Class
+                Id="7A1CEA11-5A1C-4C00-A000-000000000001"
+                Path="SliceArc.ShellExt.comhost.dll"
+                ThreadingModel="Both" />
+            </com:SurrogateServer>
+          </com:ComServer>
+        </com:Extension>
+
+        <desktop4:Extension Category="windows.fileExplorerContextMenus">
+          <desktop4:FileExplorerContextMenus>
+            <!-- desktop4 ItemType "*" matches files only; desktop5 ItemType
+                 adds Directory so folder right-clicks reach us too. Extract
+                 verbs hide themselves via GetState for folders. -->
+            <desktop4:ItemType Type="*">
+              <desktop4:Verb Id="SliceArcRoot" Clsid="7A1CEA11-5A1C-4C00-A000-000000000001" />
+            </desktop4:ItemType>
+            <desktop5:ItemType Type="Directory">
+              <desktop5:Verb Id="SliceArcDirectory" Clsid="7A1CEA11-5A1C-4C00-A000-000000000001" />
+            </desktop5:ItemType>
+          </desktop4:FileExplorerContextMenus>
+        </desktop4:Extension>
+      </Extensions>
+    </Application>
+  </Applications>
+</Package>
+
+

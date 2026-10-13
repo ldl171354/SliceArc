@@ -1,0 +1,60 @@
+<Window x:Class="SliceArc.App.Views.ProgressWindow"
+        xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
+        xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
+        Title="超速解压缩"
+        Width="470" Height="200"
+        WindowStartupLocation="CenterScreen"
+        ResizeMode="NoResize" ShowInTaskbar="True"
+        Background="{DynamicResource B.Window}"
+        Foreground="{DynamicResource B.Text}"
+        FontFamily="Segoe UI, Microsoft YaHei UI" FontSize="12"
+        Icon="/Assets/SliceArc.ico"
+        Loaded="OnLoaded">
+    <Grid Margin="16,14,16,12">
+        <Grid.RowDefinitions>
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
+            <RowDefinition Height="*" />
+            <RowDefinition Height="Auto" />
+        </Grid.RowDefinitions>
+
+        <TextBlock x:Name="Headline" Text="正在解压" FontSize="13" FontWeight="SemiBold" />
+        <TextBlock x:Name="TargetText" Grid.Row="1" Margin="0,6,0,0" TextTrimming="CharacterEllipsis"
+                   Foreground="{DynamicResource B.TextDim}" />
+
+        <Grid Grid.Row="2" Margin="0,12,0,0">
+            <Grid.ColumnDefinitions>
+                <ColumnDefinition Width="*" />
+                <ColumnDefinition Width="Auto" />
+            </Grid.ColumnDefinitions>
+            <ProgressBar x:Name="Bar" Style="{StaticResource MinimalProgressBar}" />
+            <TextBlock x:Name="Percent" Grid.Column="1" Text="0%" Margin="10,0,0,0" MinWidth="36"
+                       TextAlignment="Right" Foreground="{DynamicResource B.TextDim}" />
+        </Grid>
+
+        <!-- Per-file bar: the current member's own progress, under the total bar. -->
+        <StackPanel x:Name="FilePanel" Grid.Row="3" Visibility="Collapsed">
+            <TextBlock x:Name="FileText" Margin="0,10,0,0" TextTrimming="CharacterEllipsis"
+                       Foreground="{DynamicResource B.TextDim}" />
+            <Grid Margin="0,5,0,0">
+                <Grid.ColumnDefinitions>
+                    <ColumnDefinition Width="*" />
+                    <ColumnDefinition Width="Auto" />
+                </Grid.ColumnDefinitions>
+                <ProgressBar x:Name="FileBar" Style="{StaticResource MinimalProgressBar}" />
+                <TextBlock x:Name="FilePercent" Grid.Column="1" Text="" Margin="10,0,0,0" MinWidth="36"
+                           TextAlignment="Right" Foreground="{DynamicResource B.TextDim}" />
+            </Grid>
+        </StackPanel>
+
+        <TextBlock x:Name="Detail" Grid.Row="4" Margin="0,9,0,0" VerticalAlignment="Top"
+                   Foreground="{DynamicResource B.TextDim}" TextTrimming="CharacterEllipsis" />
+
+        <StackPanel Grid.Row="5" Orientation="Horizontal" HorizontalAlignment="Right">
+            <Button x:Name="CancelButton" Content="取消" Style="{StaticResource ToolButton}"
+                    Width="80" Click="OnCancelClick" />
+        </StackPanel>
+    </Grid>
+</Window>
