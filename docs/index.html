@@ -822,6 +822,11 @@ footer .fbar a:hover{color:var(--accent)}
       </div>
     </div>
 
+    <p class="rv" style="text-align:center;font-size:14px;opacity:.72;margin:22px 0 0">
+      下载默认走 <b>Gitee 国内镜像</b>，国内直连、无需代理；若打不开，可到
+      <a id="gh-dl-link" href="#" target="_blank" rel="noopener">GitHub</a> 下载。
+    </p>
+
     <div class="strip rv">
       <svg class="gh" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
         <path d="M12 2C6.48 2 2 6.58 2 12.23c0 4.51 2.87 8.34 6.84 9.7.5.09.68-.22.68-.49 0-.24-.01-.88-.01-1.73-2.78.62-3.37-1.37-3.37-1.37-.45-1.18-1.11-1.49-1.11-1.49-.91-.64.07-.62.07-.62 1 .07 1.53 1.05 1.53 1.05.89 1.57 2.34 1.11 2.91.85.09-.66.35-1.11.63-1.37-2.22-.26-4.56-1.14-4.56-5.06 0-1.12.39-2.03 1.03-2.75-.1-.26-.45-1.3.1-2.71 0 0 .84-.28 2.75 1.05a9.3 9.3 0 015 0c1.91-1.33 2.75-1.05 2.75-1.05.55 1.41.2 2.45.1 2.71.64.72 1.03 1.63 1.03 2.75 0 3.93-2.34 4.8-4.57 5.05.36.32.68.94.68 1.9 0 1.37-.01 2.47-.01 2.81 0 .27.18.59.69.49A10.24 10.24 0 0022 12.23C22 6.58 17.52 2 12 2z"/>
@@ -846,15 +851,18 @@ footer .fbar a:hover{color:var(--accent)}
 
 <script>
 /* ------------------------------------------------------------------
-   下载地址集中在这里配置：换仓库只改 REPO，发新版本只改 VERSION。
-   文件名必须与 GitHub Release 里上传的附件名完全一致。
+   下载地址集中在这里配置：
+   - 主下载走 Gitee 国内镜像（国内直连速度快），GitHub 作为备用。
+   - 发新版本只改 VERSION；两个 Release 的附件名必须完全一致。
    ------------------------------------------------------------------ */
 const REPO = "https://github.com/ldl171354/SliceArc";
+const MIRROR = "https://gitee.com/ldl171/SliceArc";
 const VERSION = "0.3.0";
 const RELEASES = REPO + "/releases/latest";
+const MIRROR_RELEASES = MIRROR + "/releases/download/v" + VERSION;
 const ASSET = {
-  portable: RELEASES + "/download/SliceArc-" + VERSION + "-x64-portable.exe",
-  setup:    RELEASES + "/download/SliceArc-" + VERSION + "-x64-setup.exe"
+  portable: MIRROR_RELEASES + "/SliceArc-" + VERSION + "-x64-portable.exe",
+  setup:    MIRROR_RELEASES + "/SliceArc-" + VERSION + "-x64-setup.exe"
 };
 
 document.querySelectorAll(".dl-link").forEach(function (a) {
@@ -862,6 +870,8 @@ document.querySelectorAll(".dl-link").forEach(function (a) {
 });
 document.getElementById("releases-link").href = REPO;
 document.getElementById("releases-link-2").href = REPO;
+var ghDl = document.getElementById("gh-dl-link");
+if (ghDl) { ghDl.href = REPO + "/releases"; }
 
 /* ---------- 入场动画 ----------
    用「进入视口就显示」的位置判断，而不是 IntersectionObserver：
