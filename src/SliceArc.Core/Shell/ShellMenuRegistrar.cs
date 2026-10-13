@@ -308,8 +308,28 @@ public static class ShellMenuRegistrar
             .OrderBy(n => n, StringComparer.Ordinal);
     }
 
-    private static string BuildAppliesTo() =>
-        string.Join(" OR ", ArchiveExtensions.Select(e => $"System.FileExtension:=\"{e}\""));
+    /// <summary>
+    /// The AQS condition that decides which files show the extract verbs.
+    ///
+    /// An extension list alone is not enough: the first volume of a RAR
+    /// self-extracting set is <c>name.part01.exe</c>, whose extension is
+    /// <c>.exe</c>, so every extract verb - including "delete each volume as it
+    /// is spent" - stayed hidden for exactly the files that need it most.
+    /// Listing <c>.exe</c> outright is not an option either: that would put
+    /// extraction on every executable on the disk. Match the name pattern.
+    ///
+    /// The pattern has to use a wildcard, not <c>~</c>: measured on this machine,
+    /// <c>System.FileName:~".part"</c> is silently ignored (the verb disappears)
+    /// while <c>System.FileName:*.part*.exe</c> matches. Exact <c>=</c> works too,
+    /// which is how the property name was verified.
+    /// </summary>
+    private static string BuildAppliesTo()
+    {
+        var byExtension = string.Join(" OR ", ArchiveExtensions.Select(e => $"System.FileExtension:=\"{e}\""));
+        const string selfExtractingVolume = "System.FileName:*.part*.exe";
+
+        return $"{byExtension} OR {selfExtractingVolume}";
+    }
 
     private static string Quote(string value) => "\"" + value + "\"";
 

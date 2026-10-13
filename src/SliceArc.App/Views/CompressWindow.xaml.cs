@@ -38,6 +38,20 @@ public partial class CompressWindow : Window
         if (Owner is null) WindowStartupLocation = WindowStartupLocation.CenterScreen;
 
         FormatBox.SelectedIndex = 0;
+
+        // Only offer formats the bundled 7z.dll can actually create. Asking for
+        // the others (zstd here) can only ever end in an error, and a picker that
+        // lists a choice it cannot honour is worse than a shorter picker.
+        for (var i = FormatBox.Items.Count - 1; i >= 0; i--)
+        {
+            if (FormatBox.Items[i] is not ComboBoxItem item) continue;
+            if (item.Tag is not string tag || !Enum.TryParse<CompressionFormat>(tag, out var candidate)) continue;
+            if (candidate.CanCreate()) continue;
+
+            item.IsEnabled = false;
+            item.Content = $"{item.Content}（此版本 7z.dll 不支持创建）";
+        }
+
         if (presetFormat is { } fmt)
         {
             foreach (ComboBoxItem item in FormatBox.Items)

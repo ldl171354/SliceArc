@@ -131,6 +131,36 @@ public sealed record ExtractionProgress(
         : null;
 }
 
+/// <summary>
+/// Per-volume reclamation state. Exposed for tests and diagnostics: "why was
+/// this volume not deleted" is otherwise invisible from outside the engine.
+/// </summary>
+/// <param name="Index">Position in the volume group.</param>
+/// <param name="FileName">File name on disk.</param>
+/// <param name="Length">Size of that volume file.</param>
+/// <param name="Served">True when the decoder has opened this volume.</param>
+/// <param name="Spent">True when the engine considers it reclaimable.</param>
+/// <param name="DeletionSafe">
+/// False when the decoder rewound inside this volume, which is what makes
+/// mid-flight reclamation unsafe for it: the stream can no longer prove that the
+/// bytes behind the rewind will not be read again. Independent-volume sets are
+/// not reclaimed mid-flight at all any more, but this flag is what explains why
+/// the first volumes of a RAR set were the ones that used to survive.
+/// </param>
+/// <param name="CoveredEnd">
+/// Highest archive offset covered by an unbroken read range from 0. For a sliced
+/// set this is the merged stream's value (one stream spans every volume); for a
+/// RAR set it is that volume's own coverage.
+/// </param>
+public sealed record VolumeReclaimState(
+    int Index,
+    string FileName,
+    long Length,
+    bool Served,
+    bool Spent,
+    bool DeletionSafe,
+    long CoveredEnd);
+
 /// <summary>Outcome of an extraction run.</summary>
 public sealed record ExtractionResult(
     int Extracted,

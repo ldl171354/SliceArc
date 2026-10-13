@@ -16,6 +16,9 @@ public enum CliMode
     /// <summary>Compress files/folders into an archive.</summary>
     Compress,
 
+    /// <summary>Add files/folders to an existing archive (--add-to).</summary>
+    AddToArchive,
+
     Register,
     Unregister,
     ShellStatus,
@@ -74,6 +77,9 @@ public sealed record CommandLineOptions
     /// <summary>Output archive path for --compress.</summary>
     public string? OutputArchive { get; init; }
 
+    /// <summary>Existing archive to add into, for --add-to.</summary>
+    public string? AddToArchivePath { get; init; }
+
     /// <summary>Format: 7z|zip|tar|gz|bz2|xz|zst|wim. Default 7z.</summary>
     public CompressionFormat Format { get; init; } = CompressionFormat.SevenZip;
 
@@ -128,6 +134,11 @@ public sealed record CommandLineOptions
                     break;
                 case "--add":
                     if (Next(args, ref i) is { } addSrc) addSources.Add(addSrc);
+                    break;
+                case "--add-to":
+                    options = options with { Mode = CliMode.AddToArchive };
+                    if (Next(args, ref i) is { } addToArchive)
+                        options = options with { AddToArchivePath = addToArchive, Target = addToArchive };
                     break;
                 case "--out":
                     options = options with { OutputDirectory = Next(args, ref i) };
@@ -278,6 +289,7 @@ public sealed record CommandLineOptions
           SliceArc.App.exe --extract <压缩包> [选项]          直接解压
           SliceArc.App.exe --extract-all <文件夹> [选项]      解压文件夹内全部压缩包
           SliceArc.App.exe --compress [<输出归档>] --add <源> [选项]   压缩
+          SliceArc.App.exe --add-to <压缩包> --add <源> [选项]        向现有压缩包添加 / 更新文件
           SliceArc.App.exe --register [--all-files]           安装资源管理器右键菜单
           SliceArc.App.exe --unregister                       移除右键菜单
           SliceArc.App.exe --shell-status                     查看右键菜单注册状态
@@ -296,7 +308,9 @@ public sealed record CommandLineOptions
 
         压缩选项:
           --add <路径>          要加入归档的文件 / 文件夹（可重复）
-          --format <fmt>        7z|zip|tar|gz|bz2|xz|zst|wim（默认 7z）
+          --format <fmt>        7z|zip|tar|gz|bz2|xz|wim（默认 7z）
+                                zst 只能解压不能创建（7-Zip 26.04 未实现 zstd 写入）；
+                                gz/bz2/xz 是单流格式，多个文件会自动打成 .tar.gz/.tar.bz2/.tar.xz
           --level <0..9>       压缩级别（0=存储 / 1=最快 / 5=默认 / 9=极限）
           --method <名>        编码器：LZMA / LZMA2 / Deflate / BZip2 / Zstd…
           --split-volume <字节> 创建分卷（如 1048576 = 每卷 1MB；输出 archive.7z.001/.002…）

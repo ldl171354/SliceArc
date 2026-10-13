@@ -35,6 +35,7 @@ $exe = "$portableDir\SliceArc.App.exe"
 $size = (Get-Item $exe).Length / 1MB
 Write-Host "Portable EXE: $exe ($([math]::Round($size, 1)) MB)" -ForegroundColor Green
 
+
 # ---------------------------------------------------------------------
 # Modern (Windows 11) context menu: COM extension + signed sparse MSIX.
 # The MSIX is packed and signed here at build time, so end users need
@@ -96,6 +97,7 @@ if ($Installer) {
 
     & $iscc "$root\tools\SliceArc.iss"
     if ($LASTEXITCODE -ne 0) { throw "Inno Setup compilation failed (SliceArc.iss)" }
+
 
     Get-ChildItem "$root\dist\SliceArcSetup-*.exe" |
         Sort-Object LastWriteTime -Descending |

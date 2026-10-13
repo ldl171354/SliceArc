@@ -86,6 +86,10 @@ public partial class App : Application
                 RunCompress(cli);
                 break;
 
+            case CliMode.AddToArchive:
+                RunAddToArchive(cli);
+                break;
+
             default:
                 var main = new MainWindow(cli.Target);
                 main.Show();
@@ -538,6 +542,119 @@ public partial class App : Application
         if (!cli.Quiet && AppSettings.Load().ShowCompletionDialog)
             ResultWindow.Show(null, ResultKind.Success, "压缩完成", summary);
         Shutdown(0);
+    }
+
+    // =====================================================================
+    // Headless "add to an existing archive"
+    // =====================================================================
+
+    private void RunAddToArchive(CommandLineOptions cli)
+    {
+        var archivePath = cli.AddToArchivePath;
+        if (string.IsNullOrWhiteSpace(archivePath) || !File.Exists(archivePath))
+        {
+            Fail($"找不到要更新的压缩包：{archivePath ?? "(未指定)"}",
+                "用法：SliceArc --add-to \"D:\\资料.7z\" --add \"D:\\新文件\"");
+            return;
+        }
+
+        var sources = cli.AddSources
+            .Where(s => !string.IsNullOrWhiteSpace(s))
+            .Select(s => Path.GetFullPath(s.Trim('"')))
+            .ToList();
+
+        if (sources.Count == 0)
+        {
+            Fail("没有指定要添加的内容（用 --add <文件或文件夹>，可重复）",
+                "用法：SliceArc --add-to \"D:\\资料.7z\" --add \"D:\\新文件\"");
+            return;
+        }
+
+        var missing = sources.FirstOrDefault(s => !File.Exists(s) && !Directory.Exists(s));
+        if (missing is not null)
+        {
+            Fail($"找不到源：{missing}", "该文件或文件夹不存在，请确认路径是否正确。");
+            return;
+        }
+
+        var options = new ArchiveUpdateOptions
+        {
+            ArchivePath = Path.GetFullPath(archivePath.Trim('"')),
+            Sources = sources,
+            Level = cli.Level,
+            Method = cli.Method,
+            Threads = cli.Threads,
+            EncryptHeaders = cli.EncryptHeaders,
+            Password = cli.Password,
+        };
+
+        AppLog.Info($"向 {options.ArchivePath} 添加 {sources.Count} 项");
+
+        var run = RunWork(cli, $"正在添加到 {Path.GetFileName(options.ArchivePath)}", options.ArchivePath,
+            testOnly: false, showFileBar: false,
+            (progress, token) => RunAddToWorker(options, ProgressAdapter.ForCompression(progress), token));
+
+        FinishAddTo(run, cli, options.ArchivePath);
+    }
+
+    private static ArchiveUpdateResult RunAddToWorker(
+        ArchiveUpdateOptions options,
+        Action<CompressionProgress> progress,
+        CancellationToken token)
+    {
+        using var engine = new ArchiveUpdateEngine(options with { CancellationToken = token });
+        return engine.Update(progress);
+    }
+
+    private void FinishAddTo(RunOutcome run, CommandLineOptions cli, string archivePath)
+    {
+        if (run.Failure is UnsupportedArchiveUpdateException unsupported)
+        {
+            Fail(unsupported.Message, unsupported.Hint);
+            return;
+        }
+        if (run.Failure is not null)
+        {
+            Fail(run.Failure);
+            return;
+        }
+
+        var result = run.Result as ArchiveUpdateResult;
+        if (result is null)
+        {
+            Shutdown(0);
+            return;
+        }
+
+        var summary = DescribeUpdate(result) + $" · 耗时 {ProgressText.FormatElapsed(run.Elapsed)}";
+        AppLog.Out(summary);
+        CompletionNotice.Play(AppSettings.Load(), result.Ok);
+
+        if (!result.Ok)
+        {
+            foreach (var err in result.Errors)
+                AppLog.Error("添加失败: " + err);
+            if (!_silentFailures)
+                ResultWindow.Show(null, ResultKind.Warning, "添加完成（有错误）", summary, ClipErrors(result.Errors));
+            Shutdown(1);
+            return;
+        }
+
+        if (!cli.Quiet && AppSettings.Load().ShowCompletionDialog)
+            ResultWindow.Show(null, ResultKind.Success, "已添加到压缩包", summary);
+        Shutdown(0);
+    }
+
+    private static string DescribeUpdate(ArchiveUpdateResult result)
+    {
+        var parts = new List<string>();
+        if (result.ItemsAdded > 0) parts.Add($"新增 {result.ItemsAdded} 项");
+        if (result.ItemsUpdated > 0) parts.Add($"更新 {result.ItemsUpdated} 项");
+        if (result.ItemsKept > 0) parts.Add($"保留 {result.ItemsKept} 项");
+        if (result.BytesWritten > 0) parts.Add($"输出 {result.BytesWritten / 1024.0 / 1024.0:0.#} MB");
+        if (result.Cancelled) parts.Add("已取消");
+        if (parts.Count == 0) parts.Add("没有变化");
+        return string.Join(" · ", parts);
     }
 
     /// <summary>First 10 errors for the dialog; the overflow note points at the log.</summary>

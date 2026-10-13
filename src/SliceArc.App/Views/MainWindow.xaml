@@ -46,6 +46,13 @@
                             <TextBlock Text="压缩" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
+                    <Button x:Name="AddButton" Style="{StaticResource ToolButton}" Click="OnAddFilesClick"
+                            ToolTip="把文件 / 文件夹添加进当前打开的压缩包（同名文件会被替换）；也可以直接把文件拖进窗口">
+                        <StackPanel Orientation="Horizontal">
+                            <TextBlock Style="{StaticResource Glyph}" Text="&#xE710;" Margin="0,0,7,0" />
+                            <TextBlock Text="添加" VerticalAlignment="Center" />
+                        </StackPanel>
+                    </Button>
                     <Rectangle Width="1" Height="18" Fill="{DynamicResource B.Border}" Margin="6,0" />
                     <Button x:Name="ExtractButton" Style="{StaticResource ToolButton}" Click="OnExtractToClick"
                             ToolTip="解压到指定文件夹…">

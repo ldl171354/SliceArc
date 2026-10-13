@@ -392,6 +392,7 @@ public partial class MainWindow : Window
 
         OpenButton.IsEnabled = idle;
         CompressButton.IsEnabled = canCompress;
+        AddButton.IsEnabled = idle && hasArchive;
         RefreshButton.IsEnabled = idle;
         UpButton.IsEnabled = idle && CanGoUp();
         ExtractButton.IsEnabled = idle && hasArchive;
@@ -724,6 +725,134 @@ public partial class MainWindow : Window
         }));
 
     // =====================================================================
+    // Add to the open archive
+    // =====================================================================
+
+    private void OnAddFilesClick(object sender, RoutedEventArgs e)
+    {
+        if (_busy || _archive is null) return;
+
+        var dialog = new OpenFileDialog
+        {
+            Title = "添加到压缩包",
+            Multiselect = true,
+            Filter = "所有文件|*.*",
+            InitialDirectory = Path.GetDirectoryName(_archive.Path) ?? _settings.LastDirectory,
+        };
+
+        if (dialog.ShowDialog(this) == true && dialog.FileNames.Length > 0)
+            _ = AddToArchiveAsync(dialog.FileNames);
+    }
+
+    /// <summary>
+    /// Add files / folders to the currently open archive. Same-named entries are
+    /// replaced in place. An encrypted archive needs its password, so the run is
+    /// retried behind a prompt (at most three times), exactly like extraction.
+    /// </summary>
+    private async Task AddToArchiveAsync(IReadOnlyList<string> paths)
+    {
+        if (_busy) return;
+        if (_archive is null)
+        {
+            ShowMessage("还没有打开压缩包", "先打开一个压缩包，再把文件添加进去。");
+            return;
+        }
+        if (paths.Count == 0) return;
+
+        var archivePath = _archive.Path;
+        string? password = null;
+        ArchiveUpdateResult? result = null;
+        UnsupportedArchiveUpdateException? unsupported = null;
+
+        for (var attempt = 0; ; attempt++)
+        {
+            SetBusy(true);
+            var cts = new CancellationTokenSource();
+            _cts = cts;
+            _runClock.Restart();
+            ProgressPanel.Visibility = Visibility.Visible;
+            ProgressBar.Value = 0;
+            ProgressPercent.Text = "0%";
+            ProgressDetail.Text = $"正在添加到 {Path.GetFileName(archivePath)}…";
+            FileProgressPanel.Visibility = Visibility.Collapsed;
+
+            var options = new ArchiveUpdateOptions
+            {
+                ArchivePath = archivePath,
+                Sources = paths,
+                Password = password,
+                CancellationToken = cts.Token,
+            };
+
+            try
+            {
+                result = await Task.Run(() =>
+                {
+                    using var engine = new ArchiveUpdateEngine(options);
+                    return engine.Update(OnCompressProgress);
+                });
+            }
+            catch (UnsupportedArchiveUpdateException ex) { unsupported = ex; }
+            catch (Exception ex) { Report("添加失败", ex); }
+            finally
+            {
+                SetBusy(false);
+                cts.Dispose();
+                _cts = null;
+                ProgressPanel.Visibility = Visibility.Collapsed;
+            }
+
+            // Only an encrypted archive asks to be re-run with a password.
+            if (unsupported is { PasswordRequired: true } && attempt < 3)
+            {
+                var entered = PasswordWindow.Prompt(this, Path.GetFileName(archivePath),
+                    retry: attempt > 0);
+                if (entered is null) break;
+                password = entered;
+                unsupported = null;
+                continue;
+            }
+
+            break;
+        }
+
+        if (unsupported is not null)
+        {
+            ResultWindow.Show(this, ResultKind.Error, "无法添加文件", unsupported.Message,
+                null, null, unsupported.Hint);
+            return;
+        }
+        if (result is null) return;
+
+        var parts = new List<string>();
+        if (result.ItemsAdded > 0) parts.Add($"新增 {result.ItemsAdded} 项");
+        if (result.ItemsUpdated > 0) parts.Add($"更新 {result.ItemsUpdated} 项");
+        if (result.ItemsKept > 0) parts.Add($"保留 {result.ItemsKept} 项");
+        if (result.BytesWritten > 0) parts.Add($"输出 {BrowserRow.FormatSize(result.BytesWritten)}");
+        if (result.Cancelled) parts.Add("已取消");
+        if (parts.Count == 0) parts.Add("没有变化");
+        var summary = string.Join(" · ", parts) + $" · 耗时 {ProgressText.FormatElapsed(_runClock.Elapsed)}";
+
+        StatusRight.Text = summary;
+        AppLog.Info($"添加到 {archivePath}: {summary}");
+        CompletionNotice.Play(_settings, result.Ok);
+
+        if (!result.Ok)
+            ResultWindow.Show(this, ResultKind.Warning, "添加完成（有错误）", summary,
+                result.Errors.Take(10).ToList());
+        else if (_settings.ShowCompletionDialog)
+            ResultWindow.Show(this, ResultKind.Success, "已添加到压缩包", summary);
+
+        // The archive on disk changed, so re-read it to show the new contents.
+        if (File.Exists(archivePath))
+        {
+            try { OpenArchive(archivePath); }
+            catch (Exception ex) { AppLog.Warn($"刷新归档失败: {ex.Message}"); }
+        }
+        UpdateCounts();
+    }
+
+    // =====================================================================
     // Settings popup + theme
     // =====================================================================
 
@@ -1014,7 +1143,10 @@ public partial class MainWindow : Window
     // Tools menu
     // =====================================================================
 
-    /// <summary>The "工具" dropdown. Built in code so it stays in one place.</summary>
+    /// <summary>
+    /// The 工具 dropdown. Built in code so its entries live in one place
+    /// instead of a second XAML file.
+    /// </summary>
     private void OnToolsClick(object sender, RoutedEventArgs e)
     {
         if (ToolsButton.ContextMenu is null) BuildToolsMenu();
@@ -1305,6 +1437,14 @@ public partial class MainWindow : Window
     {
         if (_busy) return;
         if (e.Data.GetData(DataFormats.FileDrop) is not string[] paths || paths.Length == 0) return;
+
+        // With an archive open, dropping files adds them to that archive
+        // (folders included) instead of switching the view.
+        if (_archive is not null)
+        {
+            _ = AddToArchiveAsync(paths);
+            return;
+        }
 
         var path = paths[0];
         foreach (var candidate in paths)

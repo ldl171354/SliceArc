@@ -23,7 +23,7 @@ namespace SliceArc.Core.Extraction;
 /// </summary>
 [ComVisible(true)]
 [ClassInterface(ClassInterfaceType.None)]
-public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPassword, IArchiveOpenCallback, IDisposable
+public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPassword, IArchiveOpenCallback, IArchiveOpenVolumeCallback, IDisposable
 {
     /// <summary>7-Zip's own clients pass a non-NULL search limit here; some handlers are picky.</summary>
     private const long MaxCheckStartPosition = 1L << 23;
@@ -50,6 +50,21 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
     private IInArchive? _archive;
     private VolumeGroup? _group;
     private ArchiveFormat? _format;
+
+    // ---- volume-callback state (RAR-style sets only) ----
+    //
+    // RAR volumes are separate archives, so instead of merging them we hand the
+    // decoder volume 1 and answer "give me <name>" from IArchiveOpenVolumeCallback.
+    // Each served volume gets its own tracking stream so "delete as it is spent"
+    // keeps working for this layout too.
+    private readonly List<VolumeAwareStream> _volumeStreams = new();
+    private readonly Dictionary<int, VolumeAwareStream> _volumeStreamByIndex = new();
+    private readonly Dictionary<string, int> _volumeIndexByName = new(StringComparer.OrdinalIgnoreCase);
+    private string _archiveDirectory = string.Empty;
+    private bool _volumeCallbackArmed;
+    private int _highestVolumeServed = -1;
+    private bool _extractionStarted;
+    private bool _fullExtractionSucceeded;
 
     // ---- state that lives only for the duration of one Extract() call ----
     private ExtractionOptions? _options;
@@ -126,8 +141,8 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
 
     public bool IsMultiVolume => _group?.IsMultiVolume ?? false;
 
-    /// <summary>Logical size of the whole archive stream, across all volumes.</summary>
-    public long TotalArchiveBytes => _stream?.TotalBytes ?? 0;
+    /// <summary>Logical size of the whole archive, across all volumes.</summary>
+    public long TotalArchiveBytes => _group?.TotalBytes ?? _stream?.TotalBytes ?? 0;
 
     // =====================================================================
     // Open
@@ -159,11 +174,33 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
     {
         var group = VolumeDetector.DetectGroup(_inputPath) ?? SingleFileGroup(_inputPath);
 
-        // Every volume style - .7z.001 slicing and PKZIP's .z01/.../.zip alike -
-        // goes through one merged stream. The ZIP handler only ever sees a plain
-        // single-stream archive that happens to span several files, and our
-        // per-volume accounting keeps working because the merge happens below it.
-        var stream = new VolumeAwareStream(group);
+        _archiveDirectory = Path.GetDirectoryName(Path.GetFullPath(_inputPath)) ?? Environment.CurrentDirectory;
+        IndexVolumesByName(group);
+
+        // Arm the volume callback for everything EXCEPT sliced multi-volume sets.
+        // A sliced set is already complete inside one merged stream, so letting
+        // the Split/Zip handler also hunt for sibling volumes would change a path
+        // that works today for no gain. Every other shape - a RAR set, or a lone
+        // .part01.exe whose siblings the detector could not name - needs it.
+        _volumeCallbackArmed = !(group.IsMultiVolume && !group.IsIndependentVolumes);
+
+        VolumeAwareStream stream;
+        if (group.IsIndependentVolumes)
+        {
+            // RAR: volume 1 only, and the handler asks for the rest by name.
+            // Concatenating these decodes as corrupt data - measured, not assumed.
+            stream = OpenVolumeStream(0, group.Volumes[0].Path);
+        }
+        else
+        {
+            // Every other volume style - .7z.001 slicing and PKZIP's .z01/.../.zip
+            // alike - goes through one merged stream. The handler only ever sees a
+            // plain single-stream archive that happens to span several files, and
+            // the per-volume accounting keeps working because the merge happens
+            // below it.
+            stream = new VolumeAwareStream(group);
+        }
+
         // The pointer handed to Open() is typed IArchiveOpenCallback* by 7z.dll,
         // which calls SetTotal/SetCompleted straight off it - no QueryInterface.
         // So it has to be an IArchiveOpenCallback vtable for real: when we passed
@@ -173,7 +210,8 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         // (Fatal error 0x80131506) the moment a handler reports open progress -
         // e.g. while scanning the central directory of a zip with thousands of
         // members. This object still answers the password QI, because it
-        // implements ICryptoGetTextPassword too.
+        // implements ICryptoGetTextPassword too - and now also the volume QI,
+        // because it implements IArchiveOpenVolumeCallback.
         var openCallback = Marshal.GetComInterfaceForObject(this, typeof(IArchiveOpenCallback));
         try
         {
@@ -403,7 +441,19 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             return BuildResult();
         }
 
-        _stream!.BeginExtractionTracking();
+        // Arm tracking for the extraction phase. Sliced sets have one merged
+        // stream; a RAR set has one per volume, and they were all opened while the
+        // handler enumerated the archive.
+        if (_group!.IsIndependentVolumes)
+        {
+            foreach (var volume in _volumeStreams) volume.BeginExtractionTracking();
+        }
+        else
+        {
+            _stream!.BeginExtractionTracking();
+        }
+
+        _extractionStarted = true;
         _progressClock.Restart();
         _sweepClock.Restart();
         PushProgress();
@@ -415,12 +465,33 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         {
             hr = _archive!.Extract(indices, (uint)indices.Length, options.TestOnly ? 1 : 0, callbackPtr);
         }
+        catch
+        {
+            // A decoder exception must not also cost the space that was already
+            // consumed. For RAR sets the final sweep is the ONLY reclaim point, so
+            // skipping it on the way out would leave every volume on disk. The
+            // coverage rule - not the "whole run succeeded" shortcut - decides
+            // here, so a half-read archive keeps everything it may still need.
+            _fullExtractionSucceeded = false;
+            SweepSpentVolumes(final: true);
+            throw;
+        }
         finally
         {
             Marshal.Release(callbackPtr);
         }
 
         CloseCurrentFile(SevenZipNative.OperationResult.Ok);
+
+        // "Every member was asked for and none failed" is what makes the final
+        // sweep safe to treat the whole set as spent, including volumes the
+        // decoder never read to the end. A partial selection must not: the
+        // volumes it skipped still hold data the user has not got yet.
+        _fullExtractionSucceeded = selected.Count == _entries.Count
+                                   && _failed == 0
+                                   && _errors.Count == 0
+                                   && !_cancelled;
+
         SweepSpentVolumes(final: true);
         PushProgress();
 
@@ -599,6 +670,170 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
 
     int IArchiveOpenCallback.SetCompleted(IntPtr files, IntPtr bytes) =>
         IsCancelled ? SevenZipNative.HResult.E_ABORT : SevenZipNative.HResult.S_OK;
+
+    // =====================================================================
+    // IArchiveOpenVolumeCallback - how a RAR set gets stitched together
+    // =====================================================================
+
+    /// <summary>
+    /// Answers <c>kpidName</c> with the archive's FILE NAME (extension included).
+    ///
+    /// The handler feeds that string to <c>CVolumeName::InitName</c>, which strips
+    /// the trailing digits and re-increments them, mapping .rar -> .rar and
+    /// .exe -> .rar. So <c>Build.part01.exe</c> yields <c>Build.part02.rar</c>,
+    /// which is exactly how a self-extracting RAR set is named on disk.
+    /// </summary>
+    int IArchiveOpenVolumeCallback.GetProperty(uint propId, IntPtr value)
+    {
+        if (value == IntPtr.Zero) return SevenZipNative.HResult.E_INVALIDARG;
+        if (propId != SevenZipNative.PropId.Name) return SevenZipNative.HResult.S_FALSE;
+
+        // The BSTR is owned by the caller's PROPVARIANT from here on; 7-Zip frees
+        // it with PropVariantClear.
+        var bstr = Marshal.StringToBSTR(Path.GetFileName(_inputPath));
+        Marshal.WriteInt16(value, 0, (short)SevenZipNative.VarType.Bstr);
+        Marshal.WriteIntPtr(value, 8, bstr);
+        return SevenZipNative.HResult.S_OK;
+    }
+
+    /// <summary>
+    /// Opens the volume the handler asked for and hands back a raw IInStream.
+    /// Returns S_FALSE (with a NULL stream) when the name does not exist - that is
+    /// how the handler learns the set has ended.
+    /// </summary>
+    int IArchiveOpenVolumeCallback.GetStream(string name, IntPtr outStream)
+    {
+        if (outStream != IntPtr.Zero) Marshal.WriteIntPtr(outStream, IntPtr.Zero);
+        if (!_volumeCallbackArmed || string.IsNullOrEmpty(name)) return SevenZipNative.HResult.S_FALSE;
+
+        // 7-Zip builds a bare file name here (its own client prepends the folder),
+        // so resolve it against the archive's directory.
+        var path = Path.IsPathRooted(name) ? name : Path.Combine(_archiveDirectory, name);
+        if (!File.Exists(path)) return SevenZipNative.HResult.S_FALSE;
+
+        var volumeIndex = IndexOfVolume(path);
+        var volume = _volumeStreamByIndex.TryGetValue(volumeIndex, out var known)
+            ? known
+            : OpenVolumeStream(volumeIndex, path);
+
+        if (_extractionStarted) volume.BeginExtractionTracking();
+
+        var pointer = Marshal.GetComInterfaceForObject(volume, typeof(IInStream));
+        if (outStream != IntPtr.Zero) Marshal.WriteIntPtr(outStream, pointer);
+        return SevenZipNative.HResult.S_OK;
+    }
+
+    /// <summary>Map every known volume file name to its index, for the name lookup above.</summary>
+    private void IndexVolumesByName(VolumeGroup group)
+    {
+        _volumeIndexByName.Clear();
+        for (var i = 0; i < group.Volumes.Count; i++)
+        {
+            var fileName = Path.GetFileName(group.Volumes[i].Path);
+            if (!string.IsNullOrEmpty(fileName)) _volumeIndexByName[fileName] = i;
+        }
+    }
+
+    private int IndexOfVolume(string path)
+    {
+        var fileName = Path.GetFileName(path);
+        return _volumeIndexByName.TryGetValue(fileName, out var index) ? index : -1;
+    }
+
+    /// <summary>
+    /// Wrap one physical volume in its own tracking stream. <paramref name="index"/>
+    /// is the position in the detected set, or -1 for a sibling the detector never
+    /// named (served, but never auto-deleted).
+    /// </summary>
+    private VolumeAwareStream OpenVolumeStream(int index, string path)
+    {
+        if (index >= 0 && _volumeStreamByIndex.TryGetValue(index, out var existing)) return existing;
+
+        var length = new FileInfo(path).Length;
+        var group = new VolumeGroup(
+            Path.GetFileName(path), VolumeStyle.None, new[] { new VolumeInfo(path, 0, length, 0) }, true);
+        var stream = new VolumeAwareStream(group);
+
+        _volumeStreams.Add(stream);
+        if (index >= 0)
+        {
+            _volumeStreamByIndex[index] = stream;
+            if (index > _highestVolumeServed) _highestVolumeServed = index;
+        }
+
+        return stream;
+    }
+
+    private bool IsDeletionSafeFor(int index)
+    {
+        if (!_group!.IsIndependentVolumes) return _stream!.IsDeletionSafe;
+        return _volumeStreamByIndex.TryGetValue(index, out var volume) && volume.IsDeletionSafe;
+    }
+
+    /// <summary>
+    /// Per-volume reclamation state, for tests and diagnostics. "Why was this
+    /// volume not deleted" is otherwise invisible from outside the engine.
+    /// </summary>
+    public IReadOnlyList<VolumeReclaimState> VolumeStates()
+    {
+        var states = new List<VolumeReclaimState>();
+        if (_group is null) return states;
+
+        for (var i = 0; i < _group.Volumes.Count; i++)
+        {
+            var volume = _group.Volumes[i];
+            var served = _volumeStreamByIndex.ContainsKey(i);
+            var coveredEnd = _group.IsIndependentVolumes
+                ? (_volumeStreamByIndex.TryGetValue(i, out var own) ? own.CoveredEnd : 0)
+                : _stream?.CoveredEnd ?? 0;
+            var deletionSafe = _group.IsIndependentVolumes
+                ? (_volumeStreamByIndex.TryGetValue(i, out var ownStream) && ownStream.IsDeletionSafe)
+                : _stream?.IsDeletionSafe ?? false;
+
+            states.Add(new VolumeReclaimState(
+                i, volume.FileName, volume.Length, served, IsVolumeSpent(i), deletionSafe, coveredEnd));
+        }
+
+        return states;
+    }
+
+    /// <summary>
+    /// Per-volume deletion judgement. Sliced sets ask the merged stream; RAR sets
+    /// ask the volume's own stream, and additionally require that the handler has
+    /// already moved on to a later volume - once it has, it never comes back.
+    /// </summary>
+    private bool IsVolumeSpent(int index)
+    {
+        if (!_group!.IsIndependentVolumes) return _stream!.IsVolumeSpent(index);
+        if (!_volumeStreamByIndex.TryGetValue(index, out var volume)) return false;
+        if (index >= _highestVolumeServed) return false;
+
+        // Coverage, not byte-exactness. A RAR volume ends with a structural
+        // end-of-archive record that the decoder never bothers to read (measured:
+        // it stops ~76 bytes short), so demanding [0, length) would mean a RAR set
+        // never reclaims anything. The data region is fully read by then, and the
+        // "handler already moved past this volume" guard above covers the rest.
+        var length = _group.Volumes[index].Length;
+        return volume.CoveredEnd >= length - IndependentVolumeTailSlack;
+    }
+
+    /// <summary>
+    /// Structural tail a RAR volume may legitimately stay unread. Well above the
+    /// real record size (tens of bytes) and far below any data region, so it can
+    /// only ever absorb layout metadata.
+    /// </summary>
+    private const long IndependentVolumeTailSlack = 4096;
+
+    private void ReleaseVolumeHandle(int index)
+    {
+        if (!_group!.IsIndependentVolumes)
+        {
+            _stream!.ReleaseVolumeHandle(index);
+            return;
+        }
+
+        if (_volumeStreamByIndex.TryGetValue(index, out var volume)) volume.ReleaseVolumeHandle(0);
+    }
 
     // =====================================================================
     // IArchiveExtractCallback
@@ -959,25 +1194,47 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         if (_options is not { DeleteSpentVolumes: true }) return;
         if (!_group!.IsComplete) return;
 
+        // Independently-archived volumes (RAR) are reclaimed only once the
+        // decoder is finished with the whole set.
+        //
+        // It keeps one stream per volume and revisits them - each member's header
+        // lives wherever it was written, and the set has a trailer - so a volume
+        // deleted mid-flight can be read again. That read fails, 7z.dll reports
+        // the archive as truncated, and the run ends in "已损坏、不完整" even
+        // though every member was written correctly; the abort then leaves the
+        // volumes it had not reached yet on disk. Sliced sets carry no such risk:
+        // they are a single strictly-forward merged stream, which is what the
+        // merge below exists for.
+        if (!final && _group.IsIndependentVolumes) return;
+
         var keepLast = Math.Max(0, _options.KeepLastVolumes);
         var limit = _group.Volumes.Count - keepLast;
+
+        // After a fully successful run nothing will read the archive again, so
+        // every volume of a fully-extracted set is spent - including the ones the
+        // decoder never read to the very end. That is the normal case: it stops
+        // ~76 bytes short of each RAR volume's trailer, and a volume holding only
+        // the archive terminator is never read at all. Requiring coverage there
+        // would mean "delete as consumed" silently cleans only part of the set.
+        var allSpent = final && _fullExtractionSucceeded;
 
         for (var i = 0; i < limit; i++)
         {
             if (_deletedVolumes[i]) continue;
 
-            // The stream tracks every volume of the set, so one call answers
-            // "is this volume spent" for sliced archives and PKZIP .z01 sets alike.
-            var tracker = _stream;
-            var trackIndex = i;
-            if (tracker is null) continue;
-            if (!tracker.IsVolumeSpent(trackIndex)) continue;
-            if (!final && !tracker.IsDeletionSafe) continue;
+            // Two layouts, one question. Sliced sets ask the merged stream, which
+            // tracks every volume; RAR sets ask each volume's own stream and only
+            // once the handler has moved on to a later one.
+            if (!allSpent)
+            {
+                if (!IsVolumeSpent(i)) continue;
+                if (!final && !IsDeletionSafeFor(i)) continue;
+            }
 
             var volume = _group.Volumes[i];
             try
             {
-                tracker.ReleaseVolumeHandle(trackIndex);
+                ReleaseVolumeHandle(i);
                 var size = new FileInfo(volume.Path).Length;
                 File.Delete(volume.Path);
                 _deletedVolumes[i] = true;
@@ -988,9 +1245,12 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             }
             catch (Exception ex)
             {
-                RecordFailure("无法回收分卷",
-                    "某个分卷删除失败：它可能正被其他程序占用。解压结果不受影响，可稍后手动删除。");
-                _errors.Add($"删除 {volume.FileName} 失败: {ex.Message}");
+                // A volume that refuses to go is not a decoding failure: every
+                // member extracted fine and the archive is simply still there.
+                // Recording it as the run's failure made the completion dialog
+                // lead with archive-corruption advice, which sent the user
+                // looking for a problem that did not exist.
+                _errors.Add($"分卷 {volume.FileName} 未能删除（可能正被占用）：{ex.Message}；解压结果不受影响，可稍后手动删除。");
             }
         }
     }
@@ -1004,13 +1264,21 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         if (_progress is null || _stream is null) return;
 
         var done = _options?.TestOnly == true ? _tested + _failed : _extracted + _failed;
+
+        // A merged stream knows exactly which volume the decoder is inside. For a
+        // RAR set the volumes are separate streams, so report how far through the
+        // set the handler has asked us to go.
+        var currentVolume = _group!.IsIndependentVolumes
+            ? Math.Max(1, _highestVolumeServed + 1)
+            : _stream.Group.VolumeIndexAt(_stream.Position) + 1;
+
         _progress(new ExtractionProgress(
             done,
             _entriesTotal,
             _bytesDone,
             _bytesTotal,
-            _stream.Group.VolumeIndexAt(_stream.Position) + 1,
-            _stream.Group.Volumes.Count,
+            currentVolume,
+            _group.Volumes.Count,
             _bytesFreed,
             _deletedNames.Count,
             _lastEntry)
@@ -1115,6 +1383,11 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             if (item is IDisposable d) { try { d.Dispose(); } catch { /* idempotent */ } }
         }
         _liveStreams.Clear();
+
+        // A RAR set keeps one stream per volume; they are all ours to release.
+        foreach (var volume in _volumeStreams) volume.Dispose();
+        _volumeStreams.Clear();
+        _volumeStreamByIndex.Clear();
 
         _stream?.Dispose();
         _stream = null;

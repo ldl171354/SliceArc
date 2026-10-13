@@ -1,0 +1,32 @@
+<Project Sdk="Microsoft.NET.Sdk">
+
+  <PropertyGroup>
+    <OutputType>Exe</OutputType>
+    <TargetFramework>net8.0-windows</TargetFramework>
+    <Nullable>enable</Nullable>
+    <ImplicitUsings>enable</ImplicitUsings>
+    <LangVersion>latest</LangVersion>
+    <Platforms>x64</Platforms>
+    <PlatformTarget>x64</PlatformTarget>
+    <AllowUnsafeBlocks>true</AllowUnsafeBlocks>
+    <UseWPF>true</UseWPF>
+    <BuiltInComInteropSupport>true</BuiltInComInteropSupport>
+    <RootNamespace>SliceArc.DropProbe</RootNamespace>
+  </PropertyGroup>
+
+  <ItemGroup>
+    <!-- References the app itself, not a copy of its logic: the probe builds the
+         real MainWindow and drops onto that very window. -->
+    <ProjectReference Include="..\..\src\SliceArc.App\SliceArc.App.csproj" />
+  </ItemGroup>
+
+  <ItemGroup>
+    <!-- MainWindow.xaml declares Icon="/Assets/SliceArc.ico", a pack URI that
+         resolves against the ENTRY assembly. Hosting the app's window from this
+         probe makes the probe the entry assembly, so it needs its own copy of
+         that resource or the window fails to load with
+         "cannot find resource 'assets/slicearc.ico'". -->
+    <Resource Include="..\..\src\SliceArc.App\Assets\SliceArc.ico" Link="Assets\SliceArc.ico" />
+  </ItemGroup>
+
+</Project>

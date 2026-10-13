@@ -246,9 +246,127 @@ private void MarkCovered(long start, long end)
 
 ---
 
-## 六、参考
+## 六、分卷的两种布局：切片卷 vs 独立卷（2026-10-13 实锤）
+
+**这一节是分卷支持的命门。** 分卷不是一个概念，是两种完全不同的东西，喂错了解码器就是"数据损坏"。
+
+| 布局 | 例子 | 每一卷是什么 | 怎么喂 7z.dll |
+|---|---|---|---|
+| **切片卷** | `a.7z.001`、`b.zip.001`、`c.z01…c.zip` | 一条归档流按字节切开 | **拼成一条连续流**（现在的做法，实测正确） |
+| **独立卷** | `v.part1.rar`、`v.r00`、**`Build.part01.exe`** | **各自都是完整归档**，靠头里的卷号串起来 | **只给第一卷**，剩下的靠 `IArchiveOpenVolumeCallback` 按名字取 |
+
+RAR 属于独立卷。把 RAR 各卷拼成一条流 → 解压报"数据损坏"
+（2026-10-13 实测：4 卷 RAR 拼接后 `解压 0 项 · 失败 1 项 · 原因：数据损坏`，而 7z.exe 正常）。
+判据在 `VolumeGroup.IsIndependentVolumes`。
+
+### 契约（读 `.refs` 源码逐条确认）
+
+`Archive/Rar/RarHandler.cpp` L1065-1125：
+
+```cpp
+openCallback->QueryInterface(IID_IArchiveOpenVolumeCallback, &openVolumeCallback);
+...
+if (!openVolumeCallback) break;                       // 拿不到就只认第一卷
+RINOK(openVolumeCallback->GetProperty(kpidName, &prop))   // ① 问归档名
+baseName = prop.bstrVal;
+seqName.InitName(baseName, _arcInfo.HaveNewVolumeName()); // ② 由它推出下一卷名
+volName = seqName.GetNextName();
+HRESULT result = openVolumeCallback->GetStream(volName, &inStream);  // ③ 要下一卷的流
+```
+
+三点必须照做：
+
+1. **`GetProperty(kpidName)` 要返回"文件名 + 扩展名"**（不是全路径、不是去掉扩展名的基名）。
+   `RarVol.h` 的 `CVolumeName::InitName` 靠这个字符串推下一卷：
+   - 结尾 `.rar` → `_after=".rar"`，再去掉尾部数字并 +1 → `v.part2.rar`
+   - **结尾 `.exe` → `_after=".rar"`** → `Build.25778117.part01.exe` 的下一卷就是
+     `Build.25778117.part02.rar` —— **7-Zip 原生就支持 `.part01.exe` 首卷，不用我们特殊处理**，
+     只要把名字如实报上去
+   - 其余（老式）→ `v.rar` + `v.r00` + `v.r01`…
+2. **`GetStream(name, IInStream**)` 的返回流必须是裸指针**（本项目坑 2）。
+   原来的声明写的是 `out IInStream?`，那会被 marshaler 变成 IUnknown vtable → 调到错槽位。
+   改成 `IntPtr outStream` + `Marshal.GetComInterfaceForObject(...)`。
+3. **找不到就 `S_FALSE` + NULL**，handler 据此判断"卷到此为止"。
+
+### 实现要点（`ExtractionEngine`）
+
+- **`_volumeCallbackArmed`**：只对"非切片多卷"开启。切片多卷已经在一整条流里了，
+  再让 Split/Zip handler 去找兄弟卷等于改一条已经验证过的路径，没有收益。
+- 独立卷模式下 **每个卷一个 `VolumeAwareStream`**，所以 `IsVolumeSpent(i)` 问的是"这一卷自己读完了没"，
+  而不是合并流的覆盖区间。
+- **删除判据要留结构尾部余量**：RAR 卷末尾有个 end-of-archive 记录，解码器**根本不读**
+  （实测停在 `1,048,500/1,048,576`，差 76 字节），逐字节全覆盖判定会让 RAR 分卷**永远删不掉**。
+  现在的判据是 `covered >= length - 4096` **且** handler 已经问过更靠后的卷。
+- `_highestVolumeServed` 在 **Open 阶段**就会被推到最后一卷（枚举条目要读每卷的头），
+  所以它单独**不能**作为"已经消费完"的证据 —— 必须叠加覆盖量。
+
+### 验证
+
+`tests/SliceArc.Probe` **第 11 节**（本机有 `C:\Program Files\WinRAR\Rar.exe` 就造真包测，没有就跳过）：
+
+- 11.1 多卷 RAR 造出来 + 识别为 `RarNewStyle` / `IsIndependentVolumes`
+- 11.2 解压成功 + 逐字节 SHA256 一致
+- 11.3 **`Build.25778117.part1.exe`（`-sfx -v1m`）被当作分卷组，解压内容正确**
+- 11.4 **边解边删回收 N-1 卷**（4 卷删 3 留 1）+ 产物仍正确
+- 失败时会打印每卷 `served/spent/covered` 状态，直接看出是哪一环没成立
+
+### ⚠️ 独立卷**不能**边解边删（2026-10-13 真实事故 + 实测复现）
+
+**这是本文件里最容易踩死人的一条。** 切片卷可以边解边删，独立卷绝对不行。
+
+事故现场：用户解一个 **17 卷 × 4GB（Rar5）** 的包，勾了「解压后删除已用完的分卷」。结果：
+
+```
+提示：解压中断 / 可能已损坏、不完整
+实际：文件基本都出来了
+但  : 只剩 part01/02/15/16/17 —— 03~14 被删了，后面的卷没删干净
+```
+
+**根因链**（每一环都实测过）：
+
+1. RAR 的每一卷都是**独立归档**，解码器持有**每卷各一个流**，而且**解压过程中还会回头读**
+   （每个成员的头、以及卷尾部记录，都在它当初被写下的那一卷里）。
+2. 边解边删把某一卷删掉 → 那次回头读失败 → `hr != S_OK`
+   → `ExtractionEngine` 走 `RecordFailure("解压中断", "压缩包可能已损坏或不完整…")` → 结果 `Ok=false` → 弹警告。
+3. 中断导致**后面的卷没被读完** → 永远不满足"已消费" → 删不掉（"好几个分卷没删干净"）。
+4. 前两卷（part01/02）在中途被跳过的原因是另一条：
+   解码器刚开档时扫过它们，解压时**又回到偏移 0** 重读 → `IsDeletionSafe=false`（有回跳）→ 中途不删。
+
+**亲手复现（可重复）**：解压一个 69 卷的 RAR 时，手动删掉还没轮到的一卷：
+
+```powershell
+$p = Start-Process $exe -ArgumentList @('--extract', "<part01>", '--out', "<out>", '--quiet') -PassThru
+Start-Sleep -Milliseconds 250
+Remove-Item "<...part30.rar>"        # 解码器还没读到，但后面必读
+$p.WaitForExit()
+```
+
+→ `exit=1`，日志：`解压 3 项 · 失败 1 项 · 原因：数据损坏 · 建议：…缺失或不完整的分卷…`
+
+**正确行为（已实现）**：
+
+- **独立卷只在整包解压全部成功之后统一回收**（`!final && IsIndependentVolumes` 直接 return）。
+- 全量成功时用「整个集合都已消费」而不是逐卷覆盖判定 —— 因为解码器**根本读不到卷尾最后 ~76 字节**
+  （结构记录），只含归档终止记录的尾卷甚至完全不读；按覆盖判定的话"边解边删"只会删掉一部分。
+- 单卷删除失败只记 warning，**不许**把整次解压判成失败（原来的写法会让完成对话框引导用户去怀疑压缩包损坏）。
+- `Extract` 抛异常时也要跑一次最终回收（独立卷模式下那是唯一的回收点）。
+- 切片卷（`.7z.001` / `.z01`）行为不变，仍然是真·边解边删。
+
+**回归保护**：Probe **11.5**（独立卷中途删除必须为 0 次）、**11.6**（切片卷必须仍然中途删除）。
+
+### 顺带修掉的一个老 bug：Windows 文件枚举不支持字符类
+
+`TryRarOldStyle` 原本用 `Directory.EnumerateFiles(dir, baseName + ".[rs]*")` 找 `.r00/.s00` 兄弟卷。
+**Windows 的 FindFirstFile 通配符只认 `*` 和 `?`，`[rs]` 被当成字面量** —— 于是老式 RAR 分卷
+（`.rar + .r00 + .r01`）**从来没被识别过**，一直悄悄退化成"单文件"。改成枚举 `baseName + ".*"`
+再交给正则过滤即可。新增的 11.0 断言（不需要 WinRAR 也能跑）就是盯这个的。
+
+---
+
+## 七、参考
 
 - 源码位置：`.refs/src/CPP/7zip/`（7-Zip 26.04 官方源码，已下载解压）
 - 关键文件：`IDecl.h`（GUID 规则）、`IStream.h`、`IProgress.h`、`PropID.h`、
-  `Archive/IArchive.h`（接口 + 枚举）
+  `Archive/IArchive.h`（接口 + 枚举）、`Archive/Rar/RarHandler.cpp`（卷回调）、
+  `Archive/Rar/RarVol.h`（卷名推导）
 - 验证程序：`tests/SliceArc.Probe/Program.cs`

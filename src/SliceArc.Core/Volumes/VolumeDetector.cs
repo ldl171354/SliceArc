@@ -11,7 +11,10 @@ public enum VolumeStyle
     /// <summary>archive.7z.001, archive.zip.001, blob.001 — plain byte slicing.</summary>
     NumericSuffix,
 
-    /// <summary>archive.part1.rar, archive.part2.rar — RAR's own naming.</summary>
+    /// <summary>
+    /// archive.part1.rar / archive.part2.rar, and the self-extracting first
+    /// volume <c>archive.part01.exe</c> (its siblings are still .part02.rar).
+    /// </summary>
     RarNewStyle,
 
     /// <summary>archive.rar + archive.r00 + archive.r01 ... — legacy RAR naming.</summary>
@@ -59,6 +62,20 @@ public sealed class VolumeGroup
     public bool IsMultiVolume => Volumes.Count > 1;
     public string? FirstVolumePath => First?.Path;
 
+    /// <summary>
+    /// True when each volume is an archive in its own right rather than a byte
+    /// slice of one logical stream.
+    ///
+    /// The distinction decides how the decoder is fed. Sliced sets (.7z.001,
+    /// .z01/.../.zip) are concatenated into a single stream. RAR sets must NOT
+    /// be: their volumes each carry their own headers, and 7-Zip's RAR handler
+    /// stitches the set together itself by asking for each volume by name
+    /// through IArchiveOpenVolumeCallback. Concatenating a RAR set decodes as
+    /// corrupt data (measured, not assumed).
+    /// </summary>
+    public bool IsIndependentVolumes =>
+        Style is VolumeStyle.RarNewStyle or VolumeStyle.RarOldStyle;
+
     /// <summary>Index of the volume owning <paramref name="offset"/> in the archive stream.</summary>
     public int VolumeIndexAt(long offset)
     {
@@ -87,9 +104,10 @@ public static partial class VolumeDetector
     [GeneratedRegex(@"^(?<base>.+)\.(?<num>\d{3,})$", RegexOptions.IgnoreCase)]
     private static partial Regex NumericSuffixRegex();
 
-    // .part1.rar / .part01.rar
-    [GeneratedRegex(@"^(?<base>.+)\.part(?<num>\d+)\.rar$", RegexOptions.IgnoreCase)]
+    // .part1.rar / .part01.rar, and .part01.exe for a self-extracting first volume
+    [GeneratedRegex(@"^(?<base>.+)\.part(?<num>\d+)\.(rar|exe)$", RegexOptions.IgnoreCase)]
     private static partial Regex RarNewStyleRegex();
+
 
     // .rar (first) / .r00 .. .r99 / .s00 .. .s99 (continuation)
     [GeneratedRegex(@"^(?<base>.+)\.(?<slot>[rs])(?<num>\d{2})$", RegexOptions.IgnoreCase)]
@@ -183,12 +201,20 @@ public static partial class VolumeDetector
         var baseName = m.Groups["base"].Value;
         var parts = new List<(int Ordinal, string Path, long Length)>();
 
-        foreach (var f in Directory.EnumerateFiles(dir, baseName + ".part*.rar"))
+        // Both extensions: a self-extracting set is name.part01.exe followed by
+        // name.part02.rar, name.part03.rar, ...
+        foreach (var f in Directory.EnumerateFiles(dir, baseName + ".part*"))
         {
             var fm = RarNewStyleRegex().Match(Path.GetFileName(f));
             if (!fm.Success) continue;
             if (!string.Equals(fm.Groups["base"].Value, baseName, StringComparison.OrdinalIgnoreCase)) continue;
             if (!int.TryParse(fm.Groups["num"].Value, out var ordinal)) continue;
+
+            // Only the FIRST volume may be an .exe; a stray .part02.exe would be
+            // something else entirely, so keep the rule strict.
+            var isExe = Path.GetExtension(f).Equals(".exe", StringComparison.OrdinalIgnoreCase);
+            if (isExe && ordinal != 1) continue;
+
             parts.Add((ordinal, f, new FileInfo(f).Length));
         }
 
@@ -266,7 +292,10 @@ public static partial class VolumeDetector
         var firstPath = Path.Combine(dir, baseName + ".rar");
         var hasFirst = File.Exists(firstPath);
 
-        foreach (var f in Directory.EnumerateFiles(dir, baseName + ".[rs]*"))
+        // Windows file enumeration understands only * and ? - a character class
+        // like ".[rs]*" is matched literally, so it finds nothing. Enumerate the
+        // whole family and let the regex decide.
+        foreach (var f in Directory.EnumerateFiles(dir, baseName + ".*"))
         {
             var fm = RarOldStyleRegex().Match(Path.GetFileName(f));
             if (!fm.Success) continue;

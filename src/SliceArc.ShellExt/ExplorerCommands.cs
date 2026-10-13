@@ -84,40 +84,13 @@ internal static class AppLocator
 }
 
 /// <summary>
-/// Cheap extension-based archive guess for GetState visibility. Deliberately
-/// broader than the classic AppliesTo list: every volume member (.zNN, .rNN,
-/// .sNN, .NNN) counts, because GetState has no AQS limitations.
+/// Archive guess for GetState visibility. The logic itself lives in the file
+/// shared with SliceArc.Core (<see cref="SliceArc.Shared.ArchiveNameHeuristics"/>)
+/// so the modern menu and the classic menu's AppliesTo cannot drift apart.
 /// </summary>
 internal static class ArchiveGuessing
 {
-    private static readonly HashSet<string> KnownExtensions = new(StringComparer.OrdinalIgnoreCase)
-    {
-        ".7z", ".zip", ".rar", ".tar", ".gz", ".bz2", ".xz", ".zst", ".lz", ".lzh",
-        ".cab", ".iso", ".wim", ".tgz", ".tbz", ".txz", ".arj", ".ace", ".apk",
-    };
-
-    public static bool IsArchive(string path)
-    {
-        var ext = Path.GetExtension(path);
-        if (KnownExtensions.Contains(ext)) return true;
-
-        // .z01 / .r00 / .s01 style: letter + digits.
-        if (ext.Length == 4 && ext[0] == '.' &&
-            char.ToLowerInvariant(ext[1]) is 'z' or 'r' or 's' &&
-            char.IsDigit(ext[2]) && char.IsDigit(ext[3]))
-            return true;
-
-        // .001 / .002 ... plain numeric slices.
-        if (ext.Length >= 4 && ext[0] == '.' && AllDigits(ext.AsSpan(1))) return true;
-
-        // .partN.rar
-        var name = Path.GetFileName(path);
-        return name.Contains(".part", StringComparison.OrdinalIgnoreCase)
-               && name.EndsWith(".rar", StringComparison.OrdinalIgnoreCase);
-    }
-
-    private static bool AllDigits(ReadOnlySpan<char> s) =>
-        s.Length > 0 && s.IndexOfAnyExceptInRange('0', '9') < 0;
+    public static bool IsArchive(string path) => SliceArc.Shared.ArchiveNameHeuristics.LooksLikeArchive(path);
 }
 
 /// <summary>Shared plumbing for a leaf verb: title, icon, visibility, launch.</summary>

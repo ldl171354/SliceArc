@@ -131,17 +131,35 @@ public interface IArchiveOpenCallback
 /// <summary>
 /// IArchiveOpenVolumeCallback (group 6, sub 0x30). When 7-Zip wants a sibling
 /// volume it asks us by name; returning S_FALSE makes it give up on that volume.
+///
+/// This is what makes RAR volume sets work at all. Their volumes are separate
+/// archives, not byte slices, so 7-Zip stitches them together itself: it asks
+/// <see cref="GetProperty"/> for <c>kpidName</c>, derives the next volume's name
+/// from it (CVolumeName::InitName knows .rar *and* .exe first volumes), then asks
+/// <see cref="GetStream"/> for that name. Handing it one concatenated stream
+/// instead - which is correct for .7z.001/.z01 sets - decodes as corrupt data.
 /// </summary>
+/// <remarks>
+/// <c>GetStream</c> hands back a raw <c>IInStream*</c>, not a typed parameter:
+/// the handler calls Read/Seek straight off the pointer without a
+/// QueryInterface, so an <c>out IInStream</c> parameter - which the default
+/// marshaler turns into an IUnknown vtable - lands on the wrong slots. Same trap
+/// as <see cref="IInArchive.Open"/>.
+/// </remarks>
 [ComVisible(true)]
 [Guid("23170F69-40C1-278A-0000-000600300000")]
 [InterfaceType(ComInterfaceType.InterfaceIsIUnknown)]
 public interface IArchiveOpenVolumeCallback
 {
+    /// <param name="propId">kpidName (3) is the one that matters: the archive's file name.</param>
+    /// <param name="value">PROPVARIANT* we fill in.</param>
     [PreserveSig]
     int GetProperty(uint propId, IntPtr value);
 
+    /// <param name="name">Volume file name, relative to the archive's folder.</param>
+    /// <param name="outStream">IInStream** we fill in; NULL means "no such volume".</param>
     [PreserveSig]
-    int GetStream([MarshalAs(UnmanagedType.LPWStr)] string name, out IInStream? inStream);
+    int GetStream([MarshalAs(UnmanagedType.LPWStr)] string name, IntPtr outStream);
 }
 
 /// <summary>

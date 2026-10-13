@@ -9,12 +9,22 @@ using SliceArc.Core.Extraction;
 using SliceArc.Core.SevenZip;
 using SliceArc.Core.Shell;
 using SliceArc.Core.Volumes;
+using SliceArc.Shared;
 using SliceArc.Probe;
 
 Console.OutputEncoding = Encoding.UTF8;
 
 const string SevenZipExe = @"C:\Program Files\7-Zip\7z.exe";
-var work = Path.Combine(Path.GetTempPath(), "slicearc-probe");
+
+// On D: next to the repo, NOT %TEMP%: this machine's C: is the tight one (the owner
+// keeps everything off it on purpose) and the probe creates ~60 MB of archives per
+// run. SLICEARC_PROBE_WORK overrides when someone wants it elsewhere.
+var work = Environment.GetEnvironmentVariable("SLICEARC_PROBE_WORK");
+if (string.IsNullOrWhiteSpace(work))
+{
+    var repoRoot = Path.GetFullPath(Path.Combine(AppContext.BaseDirectory, "..", "..", "..", "..", ".."));
+    work = Path.Combine(repoRoot, "artifacts", "probe-work");
+}
 
 var failures = 0;
 void Check(string label, bool ok, string? detail = null)
@@ -471,9 +481,32 @@ else
         missing.Count == 0,
         missing.Count == 0 ? $"找到 {wanted.Length} 项" : string.Join(" | ", missing));
 
-    var onPlainHasIt = onPlain.Any(entry => entry.Text.Contains("超速解压缩"));
-    Console.WriteLine($"  非压缩包上出现 SliceArc = {onPlainHasIt}" +
-                      (onPlainHasIt ? "  (AppliesTo 未生效，菜单会出现在所有文件上)" : "  (AppliesTo 生效，仅压缩包)"));
+    // Two verb families share the "超速解压缩" prefix: the extract/test verbs are
+    // restricted to archive extensions via AppliesTo, while the compress verbs
+    // deliberately apply to any file. They must be checked separately - a single
+    // "does the prefix appear" test would report the intended behaviour as a bug.
+    var plainExtract = onPlain.Any(entry => entry.Text.Contains("解压到当前文件夹"));
+    var plainCompress = onPlain.Any(entry => entry.Text.Contains("压缩到"));
+    Console.WriteLine($"  普通文件（非压缩包）上的菜单：" +
+                      $"解压动词={(plainExtract ? "出现" : "不出现")}（应为不出现），" +
+                      $"压缩动词={(plainCompress ? "出现" : "不出现")}（应为出现）");
+    Check("8.3 AppliesTo 只放行压缩包，压缩动词对所有文件可见",
+        !plainExtract && plainCompress, $"extract={plainExtract} compress={plainCompress}");
+
+    // 8.4 A self-extracting first volume ends in .exe, so an AppliesTo that is
+    // only an extension list hides every extract verb for it - which is exactly
+    // what a user right-clicking Build.part01.exe ran into. The pattern, not the
+    // extension, is what makes it an archive.
+    var sfxSample = Path.Combine(work, "Build.25778117.part01.exe");
+    File.WriteAllBytes(sfxSample, new byte[] { 0 });
+    var onSfx = ShellMenuQuery.Entries(sfxSample);
+    var sfxHere = onSfx.Any(e => e.Text.Contains("解压到当前文件夹"));
+    var sfxDelete = onSfx.Any(e => e.Text.Contains("删除已用完"));
+    Check("8.4 .part01.exe 上出现解压动词，含「解压并删除已用完的分卷」",
+        sfxHere && sfxDelete,
+        $"解压到当前文件夹={sfxHere} 边解边删={sfxDelete}；实到动词: " +
+        string.Join(" | ", onSfx.Where(e => e.Text.Contains("超速解压缩")).Select(e => e.Text)));
+
     Console.WriteLine($"  注册目标 = {ShellMenuRegistrar.RegisteredTarget() ?? "(未知)"}");
     Console.WriteLine("  注：级联子项由资源管理器在展开时惰性创建，子命令本身由第 7 节从注册表读回验证。");
 }
@@ -849,12 +882,253 @@ Check("10.6 目录扫描列出每个归档一次",
     new[] { "bad.7z", "good.7z", "good.zip", "locked.7z" }.All(n => scannedVerify.Any(c => c.DisplayName == n)),
     string.Join(", ", scannedVerify.Select(c => c.DisplayName)));
 
+// ===================================================================== 11
+Console.WriteLine();
+Console.WriteLine("=== 11. RAR 分卷（独立卷布局 + 自解压首卷）===");
+
+// RAR volumes are separate archives rather than byte slices of one stream, so
+// 7-Zip stitches them together through IArchiveOpenVolumeCallback: it asks for
+// kpidName, derives the next volume's name (CVolumeName::InitName maps .exe to
+// .rar), then asks for that stream. Concatenating them - correct for .7z.001 -
+// decodes as corrupt data. Only WinRAR's CLI can build these, so the extraction
+// half of this section skips itself when Rar.exe is absent.
+
+// ---- 11.0 naming rules, which need no RAR tooling ----
+var legacyDir = Path.Combine(work, "legacy-rar");
+Directory.CreateDirectory(legacyDir);
+foreach (var n in new[] { "old.rar", "old.r00", "old.r01" })
+    File.WriteAllBytes(Path.Combine(legacyDir, n), new byte[] { 0 });
+
+var legacy = VolumeDetector.DetectGroup(Path.Combine(legacyDir, "old.rar"));
+Check("11.0 老式 RAR 命名（.rar + .r00 + .r01）识别为独立卷组",
+    legacy is { Style: VolumeStyle.RarOldStyle, IsIndependentVolumes: true } && legacy.Volumes.Count == 3,
+    legacy is null ? "(未识别)" : $"{legacy.Style} · {legacy.Volumes.Count} 卷");
+
+var partExeDir = Path.Combine(work, "sfx-naming");
+Directory.CreateDirectory(partExeDir);
+foreach (var n in new[] { "Build.part01.exe", "Build.part02.rar", "Build.part03.rar" })
+    File.WriteAllBytes(Path.Combine(partExeDir, n), new byte[] { 0 });
+
+var partExe = VolumeDetector.DetectGroup(Path.Combine(partExeDir, "Build.part01.exe"));
+Check("11.0 .part01.exe 首卷 + .part02.rar 识别为同一组",
+    partExe is { Style: VolumeStyle.RarNewStyle, IsIndependentVolumes: true } && partExe.Volumes.Count == 3 &&
+    partExe.Volumes[0].FileName.Equals("Build.part01.exe", StringComparison.OrdinalIgnoreCase),
+    partExe is null ? "(未识别)" : $"{partExe.Volumes.Count} 卷 · 首卷 {partExe.Volumes[0].FileName}");
+
+var rarExe = @"C:\Program Files\WinRAR\Rar.exe";
+if (!File.Exists(rarExe))
+{
+    Console.WriteLine("  跳过：本机没有 WinRAR 命令行（Rar.exe），造不出 RAR 分卷");
+}
+else
+{
+    var rarDir = Path.Combine(work, "rar");
+    var rarSrc = Path.Combine(rarDir, "src");
+    Directory.CreateDirectory(rarSrc);
+
+    var rarPayload = new byte[3 * 1024 * 1024];
+    new Random(777).NextBytes(rarPayload);
+    File.WriteAllBytes(Path.Combine(rarSrc, "payload.bin"), rarPayload);
+    File.WriteAllText(Path.Combine(rarSrc, "readme.txt"), "rar volume probe");
+    var rarHash = Convert.ToHexString(SHA256.HashData(rarPayload));
+
+    static string HashOf(string path) =>
+        Convert.ToHexString(SHA256.HashData(File.ReadAllBytes(path)));
+
+    // ---- 11.1 plain .partN.rar ----
+    RunRar(rarExe, rarSrc, Path.Combine(rarDir, "vol.rar"), "-v1m", "-m0");
+    var rarVolumes = Directory.GetFiles(rarDir, "vol.part*.rar")
+        .OrderBy(p => p, StringComparer.Ordinal).ToList();
+    Check("11.1 造出多卷 RAR", rarVolumes.Count > 1, $"{rarVolumes.Count} 卷");
+
+    using (var engine = new ExtractionEngine(rarVolumes[0]))
+    {
+        engine.Open();
+        Check("11.1 识别为 RAR 分卷组（独立卷布局）",
+            engine.IsMultiVolume && engine.Group!.Style == VolumeStyle.RarNewStyle &&
+            engine.Group.IsIndependentVolumes,
+            $"{engine.VolumeCount} 卷 / {engine.Format?.Name}");
+    }
+
+    var rarOut = Path.Combine(rarDir, "out");
+    ExtractionResult rarResult;
+    using (var engine = new ExtractionEngine(rarVolumes[0]))
+    {
+        rarResult = engine.Extract(new ExtractionOptions { OutputDirectory = rarOut });
+    }
+
+    Check("11.2 分卷 RAR 解压成功", rarResult.Ok && rarResult.Extracted == 2, $"{rarResult.Extracted} 项");
+    Check("11.2 内容与原始逐字节一致",
+        File.Exists(Path.Combine(rarOut, "payload.bin")) &&
+        HashOf(Path.Combine(rarOut, "payload.bin")) == rarHash);
+
+    // ---- 11.3 self-extracting first volume: name.part1.exe ----
+    RunRar(rarExe, rarSrc, Path.Combine(rarDir, "Build.25778117.exe"), "-v1m", "-m0", "-sfx");
+    var sfxFirst = Directory.GetFiles(rarDir, "Build.*.part1.exe").FirstOrDefault();
+    if (sfxFirst is null)
+    {
+        Console.WriteLine("  跳过 SFX：Rar.exe 没有产出 .part1.exe");
+    }
+    else
+    {
+        using var sfxEngine = new ExtractionEngine(sfxFirst);
+        sfxEngine.Open();
+        Check("11.3 自解压首卷 .part1.exe 被当作分卷组",
+            sfxEngine.IsMultiVolume && sfxEngine.Group!.IsIndependentVolumes,
+            $"{sfxEngine.VolumeCount} 卷 / 首卷 {sfxEngine.Group!.Volumes[0].FileName}");
+
+        var sfxOut = Path.Combine(rarDir, "out-sfx");
+        var sfxResult = sfxEngine.Extract(new ExtractionOptions { OutputDirectory = sfxOut });
+        Check("11.3 .part1.exe 解压内容正确",
+            sfxResult.Ok && File.Exists(Path.Combine(sfxOut, "payload.bin")) &&
+            HashOf(Path.Combine(sfxOut, "payload.bin")) == rarHash,
+            $"{sfxResult.Extracted} 项");
+    }
+
+    // ---- 11.4 delete each volume as it is consumed ----
+    var sweepDir = Path.Combine(rarDir, "sweep");
+    Directory.CreateDirectory(sweepDir);
+    foreach (var v in rarVolumes) File.Copy(v, Path.Combine(sweepDir, Path.GetFileName(v)));
+    var sweepVolumes = Directory.GetFiles(sweepDir, "vol.part*.rar")
+        .OrderBy(p => p, StringComparer.Ordinal).ToList();
+    var sweepOut = Path.Combine(rarDir, "out-sweep");
+
+    ExtractionResult sweepResult;
+    var sweepTimeline = new List<(int Done, int Total, int Deleted)>();
+    using (var engine = new ExtractionEngine(sweepVolumes[0]))
+    {
+        sweepResult = engine.Extract(new ExtractionOptions
+        {
+            OutputDirectory = sweepOut,
+            DeleteSpentVolumes = true,
+            KeepLastVolumes = 1,
+        }, progress =>
+        {
+            // A RAR volume deleted before the decoder is finished can be read
+            // again: each member's header, and the set trailer, live wherever they
+            // were written. That read fails, 7z.dll reports the archive as
+            // truncated, and the run ends in "已损坏、不完整" even though every
+            // member was written correctly. This timeline is that regression guard.
+            lock (sweepTimeline) sweepTimeline.Add((progress.EntriesDone, progress.EntriesTotal, progress.VolumesDeleted));
+        });
+
+        var states = engine.VolumeStates();
+        Console.WriteLine("      每卷回收状态: " + string.Join(" | ",
+            states.Select(s => $"[{s.Index}] {s.FileName} served={s.Served} spent={s.Spent} safe={s.DeletionSafe} " +
+                               $"covered={s.CoveredEnd:N0}/{s.Length:N0}")));
+    }
+
+    var earlyDeletes = sweepTimeline.Where(t => t.Deleted > 0 && t.Done < t.Total).ToList();
+    Check("11.5 独立卷（RAR）绝不在解压中途被删 —— 只在全部条目结束后回收",
+        earlyDeletes.Count == 0,
+        earlyDeletes.Count == 0
+            ? $"{sweepTimeline.Count} 个进度采样点，中途删除 0 次"
+            : string.Join(" | ", earlyDeletes.Take(5).Select(t => $"{t.Done}/{t.Total} 时已删 {t.Deleted} 卷")));
+
+    // 11.6 The opposite must stay true for sliced sets: they are one strictly
+    // forward-read merged stream, so a volume the decoder has passed can never be
+    // read again - which is the whole point of reclaiming space DURING extraction.
+    // Without this, "only delete at the end" would silently become the behaviour
+    // everywhere and a set larger than the free space would stop being extractable.
+    var slicedDir = Path.Combine(rarDir, "sliced");
+    Directory.CreateDirectory(slicedDir);
+    var slicedSrc = Path.Combine(slicedDir, "payload.bin");
+    File.WriteAllBytes(slicedSrc, rarPayload);
+    RunSevenZip($"a -t7z -mx1 -v1m \"{Path.Combine(slicedDir, "slice.7z")}\" \"{slicedSrc}\"");
+
+    var slicedVolumes = Directory.GetFiles(slicedDir, "slice.7z.*")
+        .OrderBy(p => p, StringComparer.Ordinal).ToList();
+    var slicedTimeline = new List<(int Done, int Total, int Deleted)>();
+    using (var engine = new ExtractionEngine(slicedVolumes[0]))
+    {
+        engine.Extract(new ExtractionOptions
+        {
+            OutputDirectory = Path.Combine(rarDir, "out-sliced"),
+            DeleteSpentVolumes = true,
+            KeepLastVolumes = 1,
+        }, progress => { lock (slicedTimeline) slicedTimeline.Add((progress.EntriesDone, progress.EntriesTotal, progress.VolumesDeleted)); });
+    }
+
+    var slicedEarly = slicedTimeline.Where(t => t.Deleted > 0).ToList();
+    Check("11.6 切片卷（.7z.001）仍然边解边删（功能没被一刀砍掉）",
+        slicedVolumes.Count > 1 && slicedEarly.Count > 0,
+        $"{slicedVolumes.Count} 卷 · {slicedTimeline.Count} 个采样点，其中 {slicedEarly.Count} 个已出现删除");
+
+    Check("11.4 分卷 RAR 边解边删：回收 N-1 卷",
+        sweepResult.DeletedVolumes.Count == sweepVolumes.Count - 1,
+        $"{sweepResult.DeletedVolumes.Count}/{sweepVolumes.Count} 卷 · 回收 {sweepResult.BytesFreed:N0} B");
+    Check("11.4 最后一卷仍在（保险丝生效）", File.Exists(sweepVolumes[^1]));
+    Check("11.4 边删边解产物仍正确",
+        File.Exists(Path.Combine(sweepOut, "payload.bin")) &&
+        HashOf(Path.Combine(sweepOut, "payload.bin")) == rarHash);
+}
+
+// ===================================================================== 12
+Console.WriteLine();
+Console.WriteLine("=== 12. 右键菜单的可见性判定（共享源码，两个菜单都用它）===");
+
+// The classic menu gates verbs with an AQS extension list and the Windows 11
+// modern menu gates them with this code. They disagreed once: name.part01.exe
+// - the first volume of a self-extracting RAR set - matched neither, so every
+// extract verb including "delete each volume as it is spent" was hidden exactly
+// where it mattered. The code half is asserted here; the AQS half is asserted by
+// section 8.4 against a real shell menu.
+Check("12.1 普通压缩包判定", ArchiveNameHeuristics.LooksLikeArchive("a.7z")
+    && ArchiveNameHeuristics.LooksLikeArchive("a.zip")
+    && ArchiveNameHeuristics.LooksLikeArchive("a.part1.rar")
+    && ArchiveNameHeuristics.LooksLikeArchive("a.r00"));
+
+Check("12.2 自解压首卷 .part01.exe 必须算压缩包（本轮修的 bug）",
+    ArchiveNameHeuristics.LooksLikeArchive(@"C:\x\Build.25778117.part01.exe") &&
+    ArchiveNameHeuristics.LooksLikeArchive("Build.part1.exe") &&
+    ArchiveNameHeuristics.LooksLikeArchive("Build.part99.EXE"),
+    "Build.25778117.part01.exe / Build.part1.exe / Build.part99.EXE");
+
+Check("12.3 普通 exe 不算压缩包（否则解压动词会挂到全盘每个程序上）",
+    !ArchiveNameHeuristics.LooksLikeArchive(@"C:\Windows\notepad.exe") &&
+    !ArchiveNameHeuristics.LooksLikeArchive("setup.exe") &&
+    !ArchiveNameHeuristics.LooksLikeArchive("my.parts.exe") &&
+    !ArchiveNameHeuristics.LooksLikeArchive("part01.exe"));
+
+Check("12.4 数字切片与 PKZIP 分卷", ArchiveNameHeuristics.LooksLikeArchive("a.7z.001")
+    && ArchiveNameHeuristics.LooksLikeArchive("a.z01")
+    && ArchiveNameHeuristics.LooksLikeArchive("a.s05"));
+
 Console.WriteLine();
 Console.WriteLine(failures == 0
     ? "===== 全部通过 ====="
     : $"===== {failures} 项失败 =====");
 Console.WriteLine($"工作目录: {work}");
 return failures;
+
+// ---------------------------------------------------------------------------
+
+void RunRar(string exe, string workingDir, string archive, params string[] extraArgs)
+{
+    var psi = new ProcessStartInfo(exe)
+    {
+        WorkingDirectory = workingDir,
+        RedirectStandardOutput = true,
+        RedirectStandardError = true,
+        UseShellExecute = false,
+        CreateNoWindow = true,
+    };
+
+    psi.ArgumentList.Add("a");
+    foreach (var arg in extraArgs) psi.ArgumentList.Add(arg);
+    psi.ArgumentList.Add(archive);
+    psi.ArgumentList.Add("payload.bin");
+    psi.ArgumentList.Add("readme.txt");
+
+    using var process = Process.Start(psi)!;
+    process.WaitForExit();
+    if (process.ExitCode != 0)
+    {
+        Console.WriteLine(process.StandardOutput.ReadToEnd());
+        Console.WriteLine(process.StandardError.ReadToEnd());
+        throw new InvalidOperationException($"Rar.exe failed ({process.ExitCode})");
+    }
+}
 
 // ---------------------------------------------------------------------------
 

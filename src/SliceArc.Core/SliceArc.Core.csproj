@@ -14,6 +14,13 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Shared with SliceArc.ShellExt: one source of truth for "does this file
+         name look like an archive". The ShellExt compiles the same file, so the
+         classic menu and the Windows 11 modern menu cannot drift apart again. -->
+    <Compile Include="..\Shared\ArchiveNameHeuristics.cs" Link="Shared\ArchiveNameHeuristics.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <AssemblyAttribute Include="System.Runtime.CompilerServices.InternalsVisibleToAttribute">
       <_Parameter1>SliceArc.Probe</_Parameter1>
     </AssemblyAttribute>

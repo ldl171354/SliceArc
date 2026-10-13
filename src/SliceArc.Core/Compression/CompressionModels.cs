@@ -1,3 +1,5 @@
+using SliceArc.Core.SevenZip;
+
 namespace SliceArc.Core.Compression;
 
 /// <summary>Archive formats SliceArc can write. Kept to the ones 7z.dll exposes an IOutArchive for;
@@ -52,6 +54,40 @@ public static class CompressionFormatExtensions
         CompressionFormat.Wim => "wim",
         _ => "7z",
     };
+
+    /// <summary>Short user-facing name, i.e. the file extension people recognise.</summary>
+    public static string DisplayName(this CompressionFormat format) => format switch
+    {
+        CompressionFormat.SevenZip => "7z",
+        CompressionFormat.GZip => "gz",
+        CompressionFormat.BZip2 => "bz2",
+        CompressionFormat.Xz => "xz",
+        CompressionFormat.Zstd => "zst",
+        _ => format.ToString().ToLowerInvariant(),
+    };
+
+    /// <summary>
+    /// True when the bundled 7z.dll can actually CREATE this format.
+    ///
+    /// Read from the handler's kUpdate flag rather than a hard-coded list: the
+    /// shipped 7-Zip 26.04 reads .zst but cannot write it (its own CLI answers
+    /// "System ERROR: not implemented"), so offering zstd in a "create archive"
+    /// list would only ever produce an error. Callers should offer the formats
+    /// this returns true for.
+    /// </summary>
+    public static bool CanCreate(this CompressionFormat format)
+    {
+        var handler = format.HandlerName();
+        foreach (var candidate in SevenZipLibrary.Formats)
+        {
+            if (candidate.Name.Equals(handler, StringComparison.OrdinalIgnoreCase) &&
+                SevenZipLibrary.SupportsWrite(candidate))
+            {
+                return true;
+            }
+        }
+        return false;
+    }
 }
 
 /// <summary>What the caller wants the compressor to do. Mirrors <see cref="SliceArc.Core.Extraction.ExtractionOptions"/>

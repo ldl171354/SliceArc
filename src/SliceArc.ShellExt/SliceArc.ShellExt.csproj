@@ -15,6 +15,12 @@
   </PropertyGroup>
 
   <ItemGroup>
+    <!-- Shared with SliceArc.Core so both context menus agree on what counts as
+         an archive (name.part01.exe must pass - see the file's own remark). -->
+    <Compile Include="..\Shared\ArchiveNameHeuristics.cs" Link="Shared\ArchiveNameHeuristics.cs" />
+  </ItemGroup>
+
+  <ItemGroup>
     <!-- Sparse-package manifest + assets travel with the publish output so the
          registrar can sign and Add-AppxPackage -Register them in place. -->
     <None Include="Package.appxmanifest" CopyToOutputDirectory="PreserveNewest" CopyToPublishDirectory="PreserveNewest" />

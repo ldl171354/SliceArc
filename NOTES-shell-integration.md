@@ -90,6 +90,40 @@ Probe 8.x  普通文件 (not-a-archive.bin) 上出现              = False   ←
 
 想让菜单出现在所有文件上：`SliceArc.App.exe --register --all-files`（注册时不写 `AppliesTo`）。
 
+### 关键点 2b：AQS 里能用什么、不能用什么（2026-10-13 二分实测）
+
+起因：用户右键 `Build.25778117.part01.exe`（RAR 自解压**首卷**）时，**四个解压动词一个都不显示**，
+连「解压并删除已用完的分卷」也没有 —— 而它的 `System.FileExtension` 是 `.exe`，不在扩展名名单里。
+功能本身是好的（命令行 `--delete-spent` 实测 13 卷回收 12 卷），纯粹是**菜单没给入口**。
+
+把 `AppliesTo` 换成候选条件逐个跑 Probe 8.4，结论（**照抄，别猜**）：
+
+| 候选 `AppliesTo` | 结果 |
+|---|---|
+| `System.FileExtension:=".exe"` | ✅ 生效（对照组） |
+| `System.FileName:="Build.25778117.part01.exe"` | ✅ 生效（属性名对，`=` 可用） |
+| `System.FileName:~".part"` | ❌ **不生效** —— 动词直接消失 |
+| **`System.FileName:*.part*.exe`** | ✅ **生效（通配符可用）** |
+
+**结论：`AppliesTo` 的 AQS 里 `~`（包含）不工作，通配符 `*` 工作。**
+最终写法：
+
+```
+... OR System.FileName:*.part*.exe
+```
+
+注意**不能**直接列 `.exe`：那会把解压动词挂到全盘每一个可执行文件上。
+
+另一处同源逻辑在 Win11 现代菜单里（`SliceArc.ShellExt` 的 `GetState`），两边曾经各写一份、
+于是**同时漏掉** `.part01.exe`。现在判定逻辑抽成共享源码
+`src/Shared/ArchiveNameHeuristics.cs`，由 `SliceArc.Core` 和 `SliceArc.ShellExt` **各自链接编译同一份**
+（ShellExt 不能引用 Core —— 那会把 7z.dll 拖进 explorer 的 COM 代理进程）。
+AQS 那一半没法共享代码，靠 **Probe 8.4** 对着真实菜单兜底。
+
+`AppliesTo` 里 `.exe` 要慎用的另一个原因：`System.FileExtension` 取的是**最后一段扩展名**，
+所以 `a.part01.7z.001` 是 `.001`、`a.rar` 是 `.rar`，而 `x.part01.exe` 就是 `.exe` —— 分卷后缀
+必须一个个列，模式类的一律靠 `System.FileName` 通配符。
+
 ### 关键点 3：Windows 11 的新右键菜单
 
 Win11 把第三方静态动词收进「显示更多选项」（Shift+F10 / 旧版菜单）。这是系统行为，不是注册错误。
