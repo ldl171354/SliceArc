@@ -846,14 +846,15 @@ footer .fbar a:hover{color:var(--accent)}
 
 <script>
 /* ------------------------------------------------------------------
-   下载地址集中在 REPO 里改一处即可。
-   当前为占位地址 —— GitHub 仓库建好后把 OWNER/SliceArc 换掉。
+   下载地址集中在这里配置：换仓库只改 REPO，发新版本只改 VERSION。
+   文件名必须与 GitHub Release 里上传的附件名完全一致。
    ------------------------------------------------------------------ */
-const REPO = "https://github.com/OWNER/SliceArc";
+const REPO = "https://github.com/ldl171354/SliceArc";
+const VERSION = "0.3.0";
 const RELEASES = REPO + "/releases/latest";
 const ASSET = {
-  portable: REPO + "/releases/latest/download/SliceArc.App.exe",
-  setup:    REPO + "/releases/latest/download/SliceArcSetup-0.3.0-x64.exe"
+  portable: RELEASES + "/download/SliceArc-" + VERSION + "-x64-portable.exe",
+  setup:    RELEASES + "/download/SliceArc-" + VERSION + "-x64-setup.exe"
 };
 
 document.querySelectorAll(".dl-link").forEach(function (a) {
