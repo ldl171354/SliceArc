@@ -8,6 +8,10 @@ Windows 上的**分卷压缩包解压器**。格式解析全部交给 7-Zip 官�
 2. **拖拽直出（零临时文件）** —— 把文件/目录从窗口直接拖到资源管理器，边解码边写入最终路径，全程不落地临时文件。
 3. **Bandizip 风格的极简界面** —— 一行工具栏 + 一行地址栏 + 一个列表 + 一行状态栏，没有多步向导。解压时显示**双进度条**（上方总进度、下方当前文件进度）。
 
+## 下载
+
+免安装的**便携版**与**安装版**见 [Releases](https://github.com/ldl171354/SliceArc/releases)。便携版是单文件 EXE，双击即用，设置写在 exe 同目录；安装版会注册资源管理器右键菜单，卸载时自动清理。
+
 ## 功能一览
 
 ### 解压
@@ -69,9 +73,13 @@ dotnet publish src\SliceArc.App\SliceArc.App.csproj -c Release -p:PublishProfile
 - **分卷合并流**：`VolumeAwareStream` 把多个物理分卷伪装成一个连续流，并逐字节记录覆盖情况；「某分卷已消费完」的判据是 `[0, 卷末尾)` 被**单个连续区间**覆盖。
 - **拖拽直写**：自实现 COM `IDataObject`，按 lindex 产出 `IStream`，后台解码经有界队列（背压）直接写入 shell 现场创建的目标文件。
 
+## 许可
+
+本项目自身代码以 [MIT 许可](LICENSE) 发布。
+
 ## 第三方组件
 
-- `7z.dll` 来自 [7-Zip](https://www.7-zip.org/)，遵循其许可（LGPL，含 unRAR 限制）。
+- `7z.dll` 来自 [7-Zip](https://www.7-zip.org/)，遵循其许可（LGPL v2.1+，含 unRAR 限制条款）。详见 [THIRD-PARTY-NOTICES.md](THIRD-PARTY-NOTICES.md)。
 
 ## 已知限制
 
