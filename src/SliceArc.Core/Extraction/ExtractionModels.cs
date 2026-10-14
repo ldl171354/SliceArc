@@ -69,6 +69,9 @@ public sealed record ExtractionOptions
     /// <summary>Password for encrypted archives. Null for none.</summary>
     public string? Password { get; init; }
 
+    /// <summary>Decompression thread count for handlers that can parallelise; 0 = default.</summary>
+    public int Threads { get; init; }
+
     /// <summary>Refuse to write more than this many bytes (zip-bomb guard). 0 disables.</summary>
     public long MaxTotalBytes { get; init; }
 

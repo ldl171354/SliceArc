@@ -230,7 +230,7 @@ public sealed class TestArchiveCommand : ExplorerCommandBase
 public sealed class OpenCommand : ExplorerCommandBase
 {
     public override Guid CanonicalGuid => CommandGuids.Open;
-    public override string Title => "用超速解压缩打开";
+    public override string Title => "用极限解压打开";
     public override string ArgumentsFor(string path) => Quote(path);
 }
 
@@ -332,7 +332,7 @@ public sealed class SliceArcRootCommand : IExplorerCommand
 
     public int GetTitle(IntPtr psiItemArray, out IntPtr ppszName)
     {
-        ppszName = Marshal.StringToCoTaskMemUni("超速解压缩");
+        ppszName = Marshal.StringToCoTaskMemUni("极限解压");
         return HResults.S_OK;
     }
 
@@ -344,7 +344,7 @@ public sealed class SliceArcRootCommand : IExplorerCommand
 
     public int GetToolTip(IntPtr psiItemArray, out IntPtr ppszInfotip)
     {
-        ppszInfotip = Marshal.StringToCoTaskMemUni("超速解压缩");
+        ppszInfotip = Marshal.StringToCoTaskMemUni("极限解压");
         return HResults.S_OK;
     }
 

@@ -10,7 +10,7 @@ public sealed record ShellMenuOptions
     public required string ExecutablePath { get; init; }
 
     /// <summary>Top-level menu caption.</summary>
-    public string MenuText { get; init; } = "超速解压缩";
+    public string MenuText { get; init; } = "极限解压";
 
     /// <summary>Icon reference; defaults to the executable's own icon.</summary>
     public string? IconReference { get; init; }
@@ -124,21 +124,21 @@ public static class ShellMenuRegistrar
         WriteVerbs(basePath, FileVerbPath,
             new[]
             {
-                Leaf(VerbKey + "01_here", "超速解压缩：解压到当前文件夹", icon,
+                Leaf(VerbKey + "01_here", "极限解压：解压到当前文件夹", icon,
                     $"{Quote(exe)} --extract \"%1\" --here", appliesTo),
-                Leaf(VerbKey + "02_sub", "超速解压缩：解压到「归档名」文件夹", icon,
+                Leaf(VerbKey + "02_sub", "极限解压：解压到「归档名」文件夹", icon,
                     $"{Quote(exe)} --extract \"%1\" --to-subfolder", appliesTo),
-                Leaf(VerbKey + "03_here_delete", "超速解压缩：解压并删除已用完的分卷", icon,
+                Leaf(VerbKey + "03_here_delete", "极限解压：解压并删除已用完的分卷", icon,
                     $"{Quote(exe)} --extract \"%1\" --here --delete-spent", appliesTo),
-                Leaf(VerbKey + "04_test", "超速解压缩：测试压缩包完整性", icon,
+                Leaf(VerbKey + "04_test", "极限解压：测试压缩包完整性", icon,
                     $"{Quote(exe)} --extract \"%1\" --test", appliesTo),
-                Leaf(VerbKey + "20_zip", "超速解压缩：压缩到 ZIP…", icon,
+                Leaf(VerbKey + "20_zip", "极限解压：压缩到 ZIP…", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format zip", null),
-                Leaf(VerbKey + "21_7z", "超速解压缩：压缩到 7z…", icon,
+                Leaf(VerbKey + "21_7z", "极限解压：压缩到 7z…", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format 7z", null),
-                Leaf(VerbKey + "22_split", "超速解压缩：压缩并分卷…（7z · 50 MB）", icon,
+                Leaf(VerbKey + "22_split", "极限解压：压缩并分卷…（7z · 50 MB）", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 52428800", null),
-                Leaf(VerbKey + "10_open", "用超速解压缩打开", icon, $"{Quote(exe)} \"%1\"", null),
+                Leaf(VerbKey + "10_open", "用极限解压打开", icon, $"{Quote(exe)} \"%1\"", null),
             });
 
         if (options.IncludeFolderVerbs)
@@ -146,29 +146,29 @@ public static class ShellMenuRegistrar
             WriteVerbs(basePath, FolderVerbPath,
                 new[]
                 {
-                    Leaf(VerbKey + "01_all", "超速解压缩：解压此文件夹中的全部压缩包", icon,
+                    Leaf(VerbKey + "01_all", "极限解压：解压此文件夹中的全部压缩包", icon,
                         $"{Quote(exe)} --extract-all \"%1\" --here", null),
-                    Leaf(VerbKey + "20_zip", "超速解压缩：压缩此文件夹到 ZIP…", icon,
+                    Leaf(VerbKey + "20_zip", "极限解压：压缩此文件夹到 ZIP…", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format zip", null),
-                    Leaf(VerbKey + "21_7z", "超速解压缩：压缩此文件夹到 7z…", icon,
+                    Leaf(VerbKey + "21_7z", "极限解压：压缩此文件夹到 7z…", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format 7z", null),
-                    Leaf(VerbKey + "22_split", "超速解压缩：压缩此文件夹并分卷…（7z · 50 MB）", icon,
+                    Leaf(VerbKey + "22_split", "极限解压：压缩此文件夹并分卷…（7z · 50 MB）", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 52428800", null),
-                    Leaf(VerbKey + "10_open", "用超速解压缩打开", icon, $"{Quote(exe)} \"%1\"", null),
+                    Leaf(VerbKey + "10_open", "用极限解压打开", icon, $"{Quote(exe)} \"%1\"", null),
                 });
 
             WriteVerbs(basePath, BackgroundVerbPath,
                 new[]
                 {
-                    Leaf(VerbKey + "01_all", "超速解压缩：解压此文件夹中的全部压缩包", icon,
+                    Leaf(VerbKey + "01_all", "极限解压：解压此文件夹中的全部压缩包", icon,
                         $"{Quote(exe)} --extract-all \"%V\" --here", null),
-                    Leaf(VerbKey + "20_zip", "超速解压缩：压缩此文件夹到 ZIP…", icon,
+                    Leaf(VerbKey + "20_zip", "极限解压：压缩此文件夹到 ZIP…", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format zip", null),
-                    Leaf(VerbKey + "21_7z", "超速解压缩：压缩此文件夹到 7z…", icon,
+                    Leaf(VerbKey + "21_7z", "极限解压：压缩此文件夹到 7z…", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format 7z", null),
-                    Leaf(VerbKey + "22_split", "超速解压缩：压缩此文件夹并分卷…（7z · 50 MB）", icon,
+                    Leaf(VerbKey + "22_split", "极限解压：压缩此文件夹并分卷…（7z · 50 MB）", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format 7z --split-volume 52428800", null),
-                    Leaf(VerbKey + "10_open", "用超速解压缩打开此处", icon, $"{Quote(exe)} \"%V\"", null),
+                    Leaf(VerbKey + "10_open", "用极限解压打开此处", icon, $"{Quote(exe)} \"%V\"", null),
                 });
         }
 

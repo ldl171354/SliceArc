@@ -8,9 +8,9 @@
     <LangVersion>latest</LangVersion>
     <UseWPF>true</UseWPF>
     <RootNamespace>SliceArc.App</RootNamespace>
-    <AssemblyTitle>超速解压缩</AssemblyTitle>
-    <Product>超速解压缩</Product>
-    <Version>0.4.2</Version>
+    <AssemblyTitle>极限解压</AssemblyTitle>
+    <Product>极限解压</Product>
+    <Version>0.4.4</Version>
 
     <!-- The engine lives in Core, but the CCW/RCW plumbing is switched on per
          process, so the app that hosts it must opt in as well. -->
@@ -21,6 +21,31 @@
     <ApplicationIcon>Assets\SliceArc.ico</ApplicationIcon>
     <ApplicationManifest>app.manifest</ApplicationManifest>
   </PropertyGroup>
+
+  <!-- ===================================================================
+       Two builds from one source tree:
+         Release        - the open, portable "green" build. No password
+                          recovery code is compiled in at all.
+         Release-Crack  - the private local build, with the archive password
+                          recovery tool (ENABLE_CRACK).
+       =================================================================== -->
+  <PropertyGroup>
+    <Configurations>Debug;Release;Release-Crack</Configurations>
+  </PropertyGroup>
+
+  <PropertyGroup Condition="'$(Configuration)' == 'Release-Crack'">
+    <DefineConstants>$(DefineConstants);ENABLE_CRACK</DefineConstants>
+  </PropertyGroup>
+
+  <!-- Keep the recovery tool out of the open build: its sources and window are
+       dropped before compilation, so nothing but the #if branches in shared
+       files remains. -->
+  <ItemGroup Condition="'$(Configuration)' != 'Release-Crack'">
+    <Compile Remove="Crack\**\*.cs" />
+    <None Remove="Crack\**\*" />
+    <Page Remove="Views\CrackWindow.xaml" />
+    <Compile Remove="Views\CrackWindow.xaml.cs" />
+  </ItemGroup>
 
   <ItemGroup>
     <ProjectReference Include="..\SliceArc.Core\SliceArc.Core.csproj" />

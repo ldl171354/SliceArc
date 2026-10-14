@@ -1,7 +1,7 @@
 <Window x:Class="SliceArc.App.Views.AssociationsWindow"
         xmlns="http://schemas.microsoft.com/winfx/2006/xaml/presentation"
         xmlns:x="http://schemas.microsoft.com/winfx/2006/xaml"
-        Title="超速解压缩 — 文件关联"
+        Title="极限解压 — 文件关联"
         Width="640" Height="540" MinWidth="560" MinHeight="420"
         WindowStartupLocation="CenterOwner"
         Background="{DynamicResource B.Window}"
@@ -22,7 +22,7 @@
                 CornerRadius="6" Padding="14,12" Margin="0,0,0,12">
             <StackPanel>
                 <TextBlock TextWrapping="Wrap" Foreground="{DynamicResource B.TextDim}"
-                           Text="勾选希望由「超速解压缩」默认打开的压缩包格式，然后点「重新绑定」。如果默认程序被其他软件改走，回到这里重绑即可。" />
+                           Text="勾选希望由「极限解压」默认打开的压缩包格式，然后点「重新绑定」。如果默认程序被其他软件改走，回到这里重绑即可。" />
                 <TextBlock Margin="0,6,0,10" TextWrapping="Wrap" Foreground="{DynamicResource B.TextFaint}"
                            Text="注意：Windows 不允许程序静默修改默认打开方式，部分格式需要你在随后弹出的系统「默认应用」界面确认。" />
                 <StackPanel Orientation="Horizontal">

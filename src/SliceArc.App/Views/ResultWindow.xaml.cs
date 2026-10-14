@@ -42,7 +42,7 @@ public partial class ResultWindow : Window
     private void Configure(ResultKind kind, string title, string summary,
         IReadOnlyList<string>? errors, string? reason, string? hint)
     {
-        Title = $"超速解压缩 — {title}";
+        Title = $"极限解压 — {title}";
         TitleText.Text = title;
         SummaryText.Text = summary;
 

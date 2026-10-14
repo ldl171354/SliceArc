@@ -379,7 +379,7 @@ public sealed record CommandLineOptions
 
     public static string Usage =>
         """
-        超速解压缩 (SliceArc) — 分卷压缩包解压 / 压缩器
+        极限解压 (SliceArc) — 分卷压缩包解压 / 压缩器
 
         用法:
           SliceArc.App.exe [<压缩包或文件夹>]                 打开主窗口

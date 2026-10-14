@@ -9,7 +9,7 @@ namespace SliceArc.App.Services;
 /// </summary>
 internal static class Brand
 {
-    public const string Name = "超速解压缩";
+    public const string Name = "极限解压";
 
     /// <summary>One-line description written into the file-association capabilities.</summary>
     public const string Description = "分卷压缩包解压 / 压缩工具，基于 7-Zip 引擎。";

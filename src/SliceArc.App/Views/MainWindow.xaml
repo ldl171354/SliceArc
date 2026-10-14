@@ -4,7 +4,7 @@
         xmlns:d="http://schemas.microsoft.com/expression/blend/2008"
         xmlns:mc="http://schemas.openxmlformats.org/markup-compatibility/2006"
         mc:Ignorable="d"
-        Title="超速解压缩"
+        Title="极限解压"
         Width="960" Height="600" MinWidth="720" MinHeight="420"
         Background="{DynamicResource B.Window}"
         Foreground="{DynamicResource B.Text}"
@@ -230,7 +230,7 @@
                             Click="OnAssociationsClick" Content="文件关联…"
                             ToolTip="设置哪些压缩包格式默认用本软件打开（默认程序被改走后可在此重绑）" />
                     <Button Style="{StaticResource ToolButton}" Height="26"
-                            Click="OnAboutClick" Content="关于 超速解压缩…" />
+                            Click="OnAboutClick" Content="关于 极限解压…" />
                 </StackPanel>
             </Border>
         </Popup>

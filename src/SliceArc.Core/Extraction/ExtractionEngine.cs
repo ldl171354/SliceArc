@@ -123,6 +123,14 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
     /// <summary>Path the engine was constructed with (absolute).</summary>
     public string InputPath => _inputPath;
 
+    /// <summary>
+    /// Decompression thread count handed to the handler as the "mt" property before
+    /// Open. 0 = the handler's default. Only formats that can actually parallelise
+    /// decoding (LZMA2 chunks, zip, xz blocks, bzip2) benefit; single-stream LZMA
+    /// decodes on one thread by design.
+    /// </summary>
+    public int Threads { get; set; }
+
     /// <summary>The volume set, once <see cref="Open"/> has resolved it.</summary>
     public VolumeGroup? Group => _group;
 
@@ -239,6 +247,36 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             _stream = stream;
             _archive = archive;
             _format = format;
+
+            // Decompression threading. 7z.dll picks its own default, which for the
+            // single-stream LZMA decoders is one thread no matter what - the format
+            // cannot be parallelised. Handlers that CAN split the work (LZMA2 chunks,
+            // multi-file zip deflate, xz blocks, bzip2) honour "mt". Setting it is
+            // harmless where it does not apply, so ask for the requested count and let
+            // the handler decide.
+            if (Threads > 0 && archive is ISetProperties settable)
+            {
+                var props = new[] { ("mt", new PropVariant { VarType = SevenZipNative.VarType.UI4, UIntValue = (uint)Threads }) };
+                var namesPtr = Marshal.AllocHGlobal(IntPtr.Size * props.Length);
+                var valsPtr = Marshal.AllocHGlobal(Marshal.SizeOf<PropVariant>() * props.Length);
+                try
+                {
+                    for (var i = 0; i < props.Length; i++)
+                    {
+                        var name = Marshal.StringToHGlobalUni(props[i].Item1);
+                        Marshal.WriteIntPtr(namesPtr, i * IntPtr.Size, name);
+                        Marshal.StructureToPtr(props[i].Item2, valsPtr + i * Marshal.SizeOf<PropVariant>(), false);
+                    }
+                    var hr = settable.SetProperties(namesPtr, valsPtr, (uint)props.Length);
+                    // A handler that rejects "mt" simply runs on its default; not worth surfacing.
+                }
+                finally
+                {
+                    Marshal.FreeHGlobal(namesPtr);
+                    Marshal.FreeHGlobal(valsPtr);
+                }
+            }
+
             ReadEntries();
         }
         catch (Exception ex) when (_passwordAsked)
