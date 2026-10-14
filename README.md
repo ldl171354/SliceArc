@@ -53,6 +53,8 @@ tests/SliceArc.Probe/  端到端自检（造包 → 解压 → SHA256 → 删卷
 tests/SliceArc.DropProbe/ 进程内真实 OLE 投递（拖出窗口 / 拖入窗口）
 tools/                 打包、图标生成、CLI 端到端测试、UI 自动化检查
 docs/index.html        项目落地页
+docs/promo.html        22 秒宣传动画（单文件时基动画，逐帧可导出视频）
+tools/promo-*.mjs      动画的渲染/探针工具（用 CDP 驱动无头浏览器，不依赖任何 npm 包）
 ```
 
 ## 构建
