@@ -16,10 +16,34 @@
     <Grid>
         <Grid.RowDefinitions>
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
             <RowDefinition Height="*" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
+
+        <!-- update banner: only rendered when a newer release exists -->
+        <Border x:Name="UpdateBanner" Grid.Row="0" Background="#E8F0FE"
+                BorderBrush="#2F6FEB" BorderThickness="0,0,0,1" Padding="14,7"
+                Visibility="Collapsed">
+            <DockPanel>
+                <TextBlock DockPanel.Dock="Left" VerticalAlignment="Center" Foreground="#1C4FB8">
+                    <Run x:Name="UpdateBannerText" Text="发现新版本" />
+                </TextBlock>
+                <StackPanel DockPanel.Dock="Right" Orientation="Horizontal" HorizontalAlignment="Right">
+                    <Button Content="前往下载" Padding="10,3" Click="OnUpdateGoClick"
+                            Background="#2F6FEB" Foreground="White" BorderBrush="#2F6FEB"
+                            Cursor="Hand" />
+                    <Button Content="跳过此版本" Padding="8,3" Margin="8,0,0,0" Click="OnUpdateSkipClick"
+                            Background="Transparent" Foreground="#1C4FB8" BorderBrush="#9DBBF5"
+                            Cursor="Hand" />
+                    <Button Content="✕" Padding="6,3" Margin="8,0,0,0" Click="OnUpdateCloseClick"
+                            Background="Transparent" Foreground="#1C4FB8" BorderBrush="Transparent"
+                            Cursor="Hand" />
+                </StackPanel>
+                <Grid />
+            </DockPanel>
+        </Border>
 
         <!-- ==================== toolbar ==================== -->
         <Border Grid.Row="0" Background="{DynamicResource B.Surface}"
@@ -210,8 +234,26 @@
         </Popup>
 
         <!-- ==================== list ==================== -->
-        <Grid Grid.Row="1" Background="{DynamicResource B.Surface}">
-            <DataGrid x:Name="EntryGrid" Style="{StaticResource MinimalDataGrid}"
+        <Grid Grid.Row="2" Background="{DynamicResource B.Surface}">
+            <Grid.RowDefinitions>
+                <RowDefinition Height="Auto" />
+                <RowDefinition Height="*" />
+            </Grid.RowDefinitions>
+
+            <!-- view switch: list (DataGrid) / thumbnails -->
+            <Border Grid.Row="0" Background="{DynamicResource B.SurfaceAlt}"
+                    BorderBrush="{DynamicResource B.Border}" BorderThickness="0,0,0,1" Padding="8,4">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
+                    <TextBlock Text="视图" VerticalAlignment="Center" Margin="0,0,8,0"
+                               Style="{StaticResource Caption}" />
+                    <ToggleButton x:Name="ListModeButton" Height="24" Padding="10,2" Margin="0,0,4,0"
+                                  Content="列表" Click="OnViewModeClick" Tag="list" />
+                    <ToggleButton x:Name="ThumbModeButton" Height="24" Padding="10,2"
+                                  Content="缩略图" Click="OnViewModeClick" Tag="thumbs" />
+                </StackPanel>
+            </Border>
+
+            <DataGrid x:Name="EntryGrid" Grid.Row="2" Style="{StaticResource MinimalDataGrid}"
                       Sorting="OnGridSorting" MouseDoubleClick="OnGridDoubleClick"
                       SelectionChanged="OnGridSelectionChanged"
                       PreviewMouseLeftButtonDown="OnGridPreviewMouseLeftButtonDown"
@@ -219,6 +261,7 @@
                       ToolTip="把文件直接拖到资源管理器 —— 边解压边写入目标，全程不产生临时文件">
                 <DataGrid.ContextMenu>
                     <ContextMenu>
+                        <MenuItem Header="预览图片" Click="OnPreviewClick" />
                         <MenuItem Header="解压选中项到…" Click="OnExtractToClick" />
                         <MenuItem Header="解压到当前文件夹" Click="OnExtractHereClick" />
                         <MenuItem Header="快速解压（同名子文件夹）" Click="OnQuickExtractClick" />
@@ -257,7 +300,13 @@
                 </DataGrid.Columns>
             </DataGrid>
 
-            <StackPanel x:Name="EmptyHint" VerticalAlignment="Center" HorizontalAlignment="Center"
+            <!-- thumbnail view: same rows, picture-first layout -->
+            <ScrollViewer x:Name="ThumbPanel" Grid.Row="2" VerticalScrollBarVisibility="Auto"
+                          Background="{DynamicResource B.Surface}" Visibility="Collapsed">
+                <WrapPanel x:Name="ThumbWrap" Margin="10" />
+            </ScrollViewer>
+
+            <StackPanel x:Name="EmptyHint" Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center"
                         IsHitTestVisible="False" Visibility="Collapsed">
                 <TextBlock Text="&#xE7B8;" FontFamily="Segoe MDL2 Assets" FontSize="42"
                            Foreground="{DynamicResource B.Border}" HorizontalAlignment="Center" />
@@ -268,7 +317,7 @@
         </Grid>
 
         <!-- ==================== progress ==================== -->
-        <Border x:Name="ProgressPanel" Grid.Row="2" Background="{DynamicResource B.SurfaceAlt}"
+        <Border x:Name="ProgressPanel" Grid.Row="3" Background="{DynamicResource B.SurfaceAlt}"
                 BorderBrush="{DynamicResource B.Border}" BorderThickness="0,1,0,0"
                 Padding="10,8" Visibility="Collapsed">
             <Grid>
@@ -312,7 +361,7 @@
         </Border>
 
         <!-- ==================== status ==================== -->
-        <Border Grid.Row="3" Background="{DynamicResource B.Surface}"
+        <Border Grid.Row="4" Background="{DynamicResource B.Surface}"
                 BorderBrush="{DynamicResource B.Border}" BorderThickness="0,1,0,0"
                 Padding="10,5">
             <DockPanel LastChildFill="True">

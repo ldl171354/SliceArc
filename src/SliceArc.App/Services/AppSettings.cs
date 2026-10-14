@@ -44,6 +44,9 @@ public sealed class AppSettings
     /// <summary>Extensions the user asked to bind to this app, for re-binding later.</summary>
     public string[]? BoundExtensions { get; set; }
 
+    /// <summary>The release version the user chose「跳过此版本」for; the banner stays quiet for it.</summary>
+    public string? SkippedUpdateVersion { get; set; }
+
     public static string FilePath => Path.Combine(AppContext.BaseDirectory, "SliceArc.settings.json");
 
     public static AppSettings Load()

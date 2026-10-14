@@ -20,6 +20,7 @@ const FPS = Number(process.argv[4] || 30);
 const FROM = Number(process.argv[5] ?? 0);
 const TO = Number(process.argv[6] ?? 22.4);
 const FMT = (process.argv[7] || 'png').toLowerCase();
+const SIZE = (process.argv[8] || '1600x900').toLowerCase().split('x').map(Number);  // 画幅：竖屏用 1080x1920
 
 if (!FILE || !OUT) { console.error('用法: node promo-render.mjs <file:///…promo.html> <outDir> [fps] [from] [to] [png|jpeg]'); process.exit(2); }
 await mkdir(OUT, { recursive: true });
@@ -39,7 +40,7 @@ ws.addEventListener('message', ev => {
 });
 await new Promise(r => ws.addEventListener('open', r));
 await send('Page.enable'); await send('Runtime.enable');
-await send('Emulation.setDeviceMetricsOverride', { width: 1600, height: 900, deviceScaleFactor: 1, mobile: false });
+await send('Emulation.setDeviceMetricsOverride', { width: SIZE[0], height: SIZE[1], deviceScaleFactor: 1, mobile: false });
 
 const loaded = new Promise(r => waits.push(r));
 await send('Page.navigate', { url: `${FILE}?t=0&clean=1` });

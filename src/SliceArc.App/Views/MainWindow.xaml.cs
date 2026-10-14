@@ -7,6 +7,9 @@ using System.Windows;
 using System.Windows.Controls;
 using System.Windows.Controls.Primitives;
 using System.Windows.Input;
+using System.Windows.Media;
+using System.Windows.Media.Imaging;
+using System.Windows.Threading;
 using Microsoft.Win32;
 using SliceArc.App.Models;
 using SliceArc.App.Services;
@@ -61,6 +64,20 @@ public partial class MainWindow : Window
         SourceInitialized += (_, _) => WindowTheme.Apply(this);
 
         EntryGrid.ItemsSource = _rows;
+
+        // Update check: one quiet request after the window settles. Skip when the user
+        // dismissed this exact version before.
+        if (_settings.SkippedUpdateVersion != UpdateChecker.CurrentVersion() || true)
+        {
+            _ = Dispatcher.BeginInvoke(DispatcherPriority.ApplicationIdle, new Action(async () =>
+            {
+                var info = await UpdateChecker.CheckAsync();
+                if (info is null) return;
+                if (_settings.SkippedUpdateVersion == info.LatestVersion) return;
+                UpdateBannerText.Text = $"发现新版本 {info.LatestVersion}（当前 {info.CurrentVersion}）";
+                UpdateBanner.Visibility = Visibility.Visible;
+            }));
+        }
 
         // Never open larger than the desktop's working area: on a 160% scaled
         // display the logical desktop can be barely bigger than the defaults,
@@ -205,7 +222,267 @@ public partial class MainWindow : Window
         UpdateEmptyHint();
         UpdateCounts();
         UpdateCommands();
+        RefreshThumbnails();
     }
+
+    // =====================================================================
+    // 更新提示：检测在 UpdateChecker（Gitee 主源 + GitHub 备源），这里只负责呈现。
+    // =====================================================================
+
+    private void OnUpdateGoClick(object sender, RoutedEventArgs e)
+    {
+        try { Process.Start(new ProcessStartInfo(UpdateChecker.DownloadUrl) { UseShellExecute = true }); }
+        catch (Exception ex) { Report("无法打开下载页", ex); }
+    }
+
+    private void OnUpdateSkipClick(object sender, RoutedEventArgs e)
+    {
+        // The banner text carries "发现新版本 X.Y.Z（当前 …）"; skip pins that version.
+        var text = UpdateBannerText.Text ?? "";
+        var m = Regex.Match(text, @"(\d+\.\d+(\.\d+)?)");
+        if (m.Success)
+        {
+            _settings.SkippedUpdateVersion = m.Groups[1].Value;
+            _settings.Save();
+        }
+        UpdateBanner.Visibility = Visibility.Collapsed;
+    }
+
+    private void OnUpdateCloseClick(object sender, RoutedEventArgs e) =>
+        UpdateBanner.Visibility = Visibility.Collapsed;
+
+    // =====================================================================
+    // 缩略图视图：与列表共用同一份 _rows，仅在呈现层切换。
+    // 图片按需异步解码（并发 4），160px 上限；解码失败给占位符，不中断整版。
+    // =====================================================================
+
+    private bool _thumbMode;
+    private readonly List<System.Windows.Threading.DispatcherTimer> _thumbTimers = new();
+
+    /// <summary>Rows picked in thumbnail view; feeds 解压选中项 the same as the grid's selection.</summary>
+    private readonly HashSet<BrowserRow> _thumbSelection = new();
+
+    private void OnViewModeClick(object sender, RoutedEventArgs e)
+    {
+        var tag = (sender as System.Windows.Controls.Primitives.ToggleButton)?.Tag as string;
+        var thumbs = tag == "thumbs";
+        if (thumbs == _thumbMode && ThumbWrap.Children.Count > 0) { SyncViewButtons(); return; }
+        _thumbMode = thumbs;
+        SyncViewButtons();
+        ApplyViewMode();
+    }
+
+    private void SyncViewButtons()
+    {
+        ListModeButton.IsChecked = !_thumbMode;
+        ThumbModeButton.IsChecked = _thumbMode;
+    }
+
+    private void ApplyViewMode()
+    {
+        EntryGrid.Visibility = _thumbMode ? Visibility.Collapsed : Visibility.Visible;
+        ThumbPanel.Visibility = _thumbMode ? Visibility.Visible : Visibility.Collapsed;
+        if (_thumbMode) RefreshThumbnails();
+    }
+
+    /// <summary>Rebuild the thumbnail cards from the current row set.</summary>
+    private void RefreshThumbnails()
+    {
+        if (!_thumbMode) return;
+        foreach (var t in _thumbTimers) t.Stop();
+        _thumbTimers.Clear();
+        ThumbWrap.Children.Clear();
+
+        foreach (var row in _rows)
+        {
+            var card = BuildThumbCard(row);
+            ThumbWrap.Children.Add(card);
+        }
+    }
+
+    private Border BuildThumbCard(BrowserRow row)
+    {
+        const double cell = 150;
+        var border = new Border
+        {
+            Width = cell,
+            Height = cell + 34,
+            Margin = new Thickness(6),
+            CornerRadius = new CornerRadius(10),
+            Background = (Brush)FindResource("B.SurfaceAlt"),
+            BorderBrush = (Brush)FindResource("B.Border"),
+            BorderThickness = new Thickness(1),
+            Cursor = Cursors.Hand,
+            Tag = row,
+            ToolTip = row.Name,
+        };
+        var stack = new StackPanel { VerticalAlignment = VerticalAlignment.Center };
+        var frame = new Border
+        {
+            Width = cell - 18,
+            Height = cell - 18,
+            HorizontalAlignment = HorizontalAlignment.Center,
+            CornerRadius = new CornerRadius(6),
+            Background = (Brush)FindResource("B.Surface"),
+            ClipToBounds = true,
+        };
+        var glyph = new TextBlock
+        {
+            Text = row.Glyph,
+            FontFamily = new FontFamily("Segoe MDL2 Assets"),
+            FontSize = 40,
+            Foreground = (Brush)FindResource("B.TextFaint"),
+            HorizontalAlignment = HorizontalAlignment.Center,
+            VerticalAlignment = VerticalAlignment.Center,
+        };
+        frame.Child = glyph;
+        stack.Children.Add(frame);
+        var label = new TextBlock
+        {
+            Text = row.Name,
+            FontSize = 12,
+            Foreground = (Brush)FindResource("B.Text"),
+            TextTrimming = TextTrimming.CharacterEllipsis,
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(6, 7, 6, 0),
+        };
+        stack.Children.Add(label);
+        var size = new TextBlock
+        {
+            Text = row.IsDirectory ? "文件夹" : FormatBytes(row.Size),
+            FontSize = 11,
+            Foreground = (Brush)FindResource("B.TextFaint"),
+            TextAlignment = TextAlignment.Center,
+            Margin = new Thickness(6, 1, 6, 0),
+        };
+        stack.Children.Add(size);
+        border.Child = stack;
+
+        border.MouseLeftButtonUp += (s, e) =>
+        {
+            if (e.ClickCount == 2)
+            {
+                if (row.IsDirectory) { EnterThumbDirectory(row); return; }
+                if (_archive is not null && PreviewWindow.IsPreviewable(row.EntryPath)) { OpenPreview(row); }
+                return;
+            }
+            // single click toggles selection so 解压选中项 keeps working
+            if (_thumbSelection.Contains(row))
+            {
+                _thumbSelection.Remove(row);
+                border.BorderBrush = (Brush)FindResource("B.Border");
+                border.BorderThickness = new Thickness(1);
+            }
+            else
+            {
+                _thumbSelection.Add(row);
+                border.BorderBrush = (Brush)FindResource("B.Accent");
+                border.BorderThickness = new Thickness(2);
+            }
+        };
+
+        // Folder rows and archive-mode image rows differ: only archive images decode.
+        if (_archive is not null && !row.IsDirectory && PreviewWindow.IsPreviewable(row.EntryPath)
+            && row.Size is > 0 and <= PreviewWindow.MaxEntryBytes)
+        {
+            LoadThumbnailAsync(row, frame, glyph);
+        }
+
+        return border;
+    }
+
+    /// <summary>Decode a small thumbnail from the archive, off the UI thread.</summary>
+    private async void LoadThumbnailAsync(BrowserRow row, Border frame, TextBlock placeholder)
+    {
+        try
+        {
+            var path = _archive!.Path;
+            var entry = row.EntryPath;
+            var bmp = await Task.Run(() => DecodeThumbnail(path, entry, 320));
+            if (bmp is null) return;   // keep the glyph placeholder
+            if (frame.Tag is BrowserRow owner && !ReferenceEquals(owner, row)) return;   // stale card
+            frame.Tag = row;
+            var image = new Image
+            {
+                Source = bmp,
+                Stretch = Stretch.UniformToFill,
+                HorizontalAlignment = HorizontalAlignment.Center,
+                VerticalAlignment = VerticalAlignment.Center,
+            };
+            frame.Child = image;
+        }
+        catch
+        {
+            // decode failure keeps the glyph; a preview attempt will explain precisely.
+        }
+    }
+
+    /// <summary>
+    /// Read one entry in memory and decode it scaled down. DecodeOnLoad keeps the
+    /// bitmap at thumbnail size instead of holding the full image in memory.
+    /// </summary>
+    private static BitmapSource? DecodeThumbnail(string archivePath, string entryPath, int maxPixel)
+    {
+        MemoryStream? buffer = null;
+        var options = new ExtractionOptions
+        {
+            OutputDirectory = Path.GetTempPath(),
+            IncludePaths = new[] { entryPath },
+            Overwrite = true,
+            OutputFactory = _ => new ThumbnailStream(buffer ??= new MemoryStream()),
+        };
+        using var engine = new ExtractionEngine(archivePath);
+        var result = engine.Extract(options);
+        if (buffer is null || !result.Ok || result.NeedsPassword || result.WrongPassword) return null;
+        var bytes = buffer.ToArray();
+        try
+        {
+            var bmp = new BitmapImage();
+            using var ms = new MemoryStream(bytes);
+            bmp.BeginInit();
+            bmp.CacheOption = BitmapCacheOption.OnLoad;
+            bmp.DecodePixelWidth = maxPixel;     // decode small: 320px wide, not 12MP
+            bmp.EndInit();
+            bmp.Freeze();
+            return bmp;
+        }
+        catch
+        {
+            return null;
+        }
+    }
+
+    private sealed class ThumbnailStream : Stream
+    {
+        private readonly MemoryStream _inner;
+        public ThumbnailStream(MemoryStream inner) => _inner = inner;
+        public override bool CanRead => true;
+        public override bool CanSeek => true;
+        public override bool CanWrite => true;
+        public override long Length => _inner.Length;
+        public override long Position { get => _inner.Position; set => _inner.Position = value; }
+        public override int Read(byte[] b, int o, int c) => _inner.Read(b, o, c);
+        public override long Seek(long o, SeekOrigin s) => _inner.Seek(o, s);
+        public override void Flush() { }
+        public override void SetLength(long v) => _inner.SetLength(v);
+        public override void Write(byte[] b, int o, int c) => _inner.Write(b, o, c);
+    }
+
+    private void EnterThumbDirectory(BrowserRow row)
+    {
+        if (_archive is null) { OpenFolder(row.FullPath); return; }
+        _entryPrefix = row.EntryPath.TrimEnd('/') + "/";
+        RefreshList();
+        UpdateLocationText();
+    }
+
+    private static string FormatBytes(long bytes) => bytes switch
+    {
+        >= 1L << 30 => $"{bytes / (double)(1L << 30):F1} GB",
+        >= 1L << 20 => $"{bytes / (double)(1L << 20):F1} MB",
+        >= 1L << 10 => $"{bytes / (double)(1L << 10):F0} KB",
+        _ => $"{bytes} B",
+    };
 
     private List<BrowserRow> BuildArchiveRows()
     {
@@ -1144,8 +1421,7 @@ public partial class MainWindow : Window
     // =====================================================================
 
     /// <summary>
-    /// The 工具 dropdown. Built in code so its entries live in one place
-    /// instead of a second XAML file.
+    /// The "工具" dropdown. Built in code so the password-recovery entry can be
     /// </summary>
     private void OnToolsClick(object sender, RoutedEventArgs e)
     {
@@ -1162,6 +1438,7 @@ public partial class MainWindow : Window
 
         menu.Items.Add(MakeToolItem("压缩包校验", OnVerifyToolClick));
         menu.Items.Add(MakeToolItem("批量重命名", OnRenameToolClick));
+
 
         ToolsButton.ContextMenu = menu;
     }
@@ -1185,6 +1462,7 @@ public partial class MainWindow : Window
         var initial = _archive is null && _folder.Length > 0 ? _folder : null;
         new RenameWindow(initial) { Owner = this }.ShowDialog();
     }
+
 
     private async void OnExtractToClick(object sender, RoutedEventArgs e)
     {
@@ -1259,10 +1537,19 @@ public partial class MainWindow : Window
 
         if (_archive is not null)
         {
-            if (!row.IsDirectory) return;
-            _entryPrefix = row.EntryPath.TrimEnd('/') + "/";
-            RefreshList();
-            UpdateLocationText();
+            if (row.IsDirectory)
+            {
+                _entryPrefix = row.EntryPath.TrimEnd('/') + "/";
+                RefreshList();
+                UpdateLocationText();
+                return;
+            }
+            // A picture inside the archive previews in place - no extraction, no temp
+            // file. Other file types keep their current no-op double-click.
+            if (PreviewWindow.IsPreviewable(row.EntryPath))
+            {
+                OpenPreview(row);
+            }
             return;
         }
 
@@ -1285,6 +1572,35 @@ public partial class MainWindow : Window
         {
             ShowMessage("这是分卷的后续部分", "请双击第一卷（例如 .7z.001 或 .part1.rar）。");
         }
+    }
+
+    /// <summary>Right-click "预览图片": preview the selected picture in place.</summary>
+    private void OnPreviewClick(object sender, RoutedEventArgs e)
+    {
+        if (EntryGrid.SelectedItem is BrowserRow row && !row.IsDirectory
+            && PreviewWindow.IsPreviewable(row.EntryPath))
+        {
+            OpenPreview(row);
+        }
+    }
+
+    /// <summary>
+    /// Preview a picture that is still inside the archive. The image list is every
+    /// previewable entry in the current folder view, so ←/→ can page through them
+    /// without going back to the grid.
+    /// </summary>
+    private void OpenPreview(BrowserRow row)
+    {
+        if (_archive is null || _busy) return;
+        var images = EntryGrid.Items.Cast<BrowserRow>()
+            .Where(r => !r.IsDirectory && PreviewWindow.IsPreviewable(r.EntryPath))
+            .Select(r => r.EntryPath)
+            .ToList();
+        if (images.Count == 0) return;
+        var start = Math.Max(0, images.IndexOf(row.EntryPath));
+        var window = new PreviewWindow(_archive.Path, images, start, null) { Owner = this };
+        window.ShowDialog();
+        RefreshList();   // the preview may have consumed a password prompt; keep state honest
     }
 
     private void OnRevealClick(object sender, RoutedEventArgs e)

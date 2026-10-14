@@ -32,6 +32,22 @@ public partial class App : Application
         _silentFailures = cli.Quiet && cli.Mode != CliMode.Window;
         AppLog.Info($"启动 mode={cli.Mode} target={cli.Target ?? "(none)"} quiet={cli.Quiet}");
 
+        // A command line we cannot honour is reported, never guessed around. The user
+        // asked for something we cannot do (a format we cannot write, or a name that
+        // disagrees with --format), so this is the error surface, not a warning.
+        if (cli.ArgumentError is { Length: > 0 } argError)
+        {
+            AppLog.Error(argError);
+            AppLog.Out(argError);
+            if (!cli.Quiet)
+            {
+                ResultWindow.Show(null, ResultKind.Error, "命令行参数有误", argError,
+                    null, null, "修正参数后重试。可创建的格式：7z / zip / tar / gz / bz2 / xz / wim。");
+            }
+            Shutdown(2);
+            return;
+        }
+
         // Headless modes open several windows in sequence (e.g. compress:
         // parameter dialog, then the progress window). OnLastWindowClose would
         // kill the process the moment the first dialog closes, so these modes

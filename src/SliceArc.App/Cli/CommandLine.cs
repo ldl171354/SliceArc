@@ -1,3 +1,4 @@
+using System.IO;
 using SliceArc.Core.Compression;
 
 namespace SliceArc.App.Cli;
@@ -101,6 +102,18 @@ public sealed record CommandLineOptions
     /// <summary>Thread count; 0 = automatic.</summary>
     public int Threads { get; init; }
 
+    /// <summary>True when --format was given explicitly, so it outranks the output extension.</summary>
+    public bool FormatExplicit { get; init; }
+
+    /// <summary>
+    /// Set when the command line itself is unusable (unknown --format value, a name we
+    /// cannot write, or an output extension that disagrees with --format). The app
+    /// reports this and exits non-zero instead of guessing - silently producing a
+    /// different format than the name claims is how a user ends up with a .rar that is
+    /// really a 7z.
+    /// </summary>
+    public string? ArgumentError { get; init; }
+
     public static CommandLineOptions Parse(IReadOnlyList<string> args)
     {
         var options = new CommandLineOptions();
@@ -175,8 +188,12 @@ public sealed record CommandLineOptions
                     break;
                 case "--format":
                     var fmtStr = Next(args, ref i);
-                    if (fmtStr is not null && TryParseFormat(fmtStr, out var fmt))
-                        options = options with { Format = fmt };
+                    if (fmtStr is null)
+                        options = options with { ArgumentError = "--format 后面缺少格式名。可创建的格式：7z / zip / tar / gz / bz2 / xz / wim。" };
+                    else if (TryParseFormat(fmtStr, out var fmt, out var fmtErr))
+                        options = options with { Format = fmt, FormatExplicit = true };
+                    else
+                        options = options with { ArgumentError = fmtErr };
                     break;
                 case "--level":
                     if (int.TryParse(Next(args, ref i), out var lvl)) options = options with { Level = Math.Clamp(lvl, 0, 9) };
@@ -217,6 +234,48 @@ public sealed record CommandLineOptions
             }
         }
 
+        // --compress: with no --format, take the format from the output name - users type
+        // the extension, not a flag. A name we cannot write, or a name that disagrees
+        // with an explicit --format, is reported instead of silently writing something
+        // else: asking for backup.rar must not hand back a 7z called backup.rar.
+        if (options.Mode == CliMode.Compress && options.OutputArchive is { Length: > 0 } outPath)
+        {
+            var ext = Path.GetExtension(outPath).TrimStart('.').ToLowerInvariant();
+            // .7z.001 style split names end in digits; the real format lives one dot earlier.
+            if (ext.Length > 0 && !ext.All(char.IsDigit))
+            {
+                if (TryParseFormat(ext, out var byExt, out _))
+                {
+                    if (!options.FormatExplicit)
+                        options = options with { Format = byExt };
+                    else if (byExt != options.Format)
+                        options = options with
+                        {
+                            ArgumentError = $"输出文件名用的是 .{ext}，但 --format 指定的是 {options.Format.DisplayName()}，两者不一致。请改文件名，或去掉 --format 让它按扩展名自动选择。"
+                        };
+                }
+                else if (IsReadOnlyFormatName(ext))
+                {
+                    // The name promises a format we cannot write. Without --format that is the
+                    // whole answer; with one the file would still be misnamed, so both are errors
+                    // rather than silently writing something else under that name.
+                    options = options with
+                    {
+                        ArgumentError = options.FormatExplicit
+                            ? $"输出文件名用的是 .{ext}（只能解压，不能创建），但 --format 指定的是 {options.Format.DisplayName()}。请把文件名改成 .{options.Format.Extension()}。"
+                            : $"「{ext.ToUpperInvariant()}」只能解压，不能创建。请把输出名改成 .7z / .zip / .tar / .gz / .bz2 / .xz / .wim 之一。"
+                    };
+                }
+                // Any other extension says nothing about the format: 7z stays the default.
+            }
+        }
+
+        // The accumulated local list, not options.AddSources: that field is only bound in
+        // the return statement below, so reading it here sees the empty default and would
+        // reject every compress that did pass --add.
+        if (options.Mode == CliMode.Compress && addSources.Count == 0 && options.ArgumentError is null)
+            options = options with { ArgumentError = "压缩需要至少一个 --add <文件或文件夹> 指定要打包的内容。" };
+
         return options with { Target = target, Paths = paths, AddSources = addSources };
     }
 
@@ -237,24 +296,62 @@ public sealed record CommandLineOptions
     /// Parse --format accepting both enum names (SevenZip, GZip…) and short
     /// aliases (7z, gz, bz2, xz, zst, wim, tar, zip). BandZip-style UX means
     /// users type the extension, not the CLR enum name.
+    /// <para>
+    /// An unrecognised value is an error, never a fallback: silently compressing
+    /// to 7z because "rar" did not parse is how a .rar that is really a 7z gets
+    /// created. Read-only formats get their own message so the user is told what
+    /// to use instead.
+    /// </para>
     /// </summary>
-    private static bool TryParseFormat(string s, out CompressionFormat format)
+    private static bool TryParseFormat(string s, out CompressionFormat format, out string? error)
     {
         var lower = s.Trim().ToLowerInvariant();
-        format = lower switch
+        error = null;
+        switch (lower)
         {
-            "7z" or "sevenzip" => CompressionFormat.SevenZip,
-            "zip" => CompressionFormat.Zip,
-            "tar" => CompressionFormat.Tar,
-            "gz" or "gzip" or "tgz" => CompressionFormat.GZip,
-            "bz2" or "bzip2" or "tbz2" => CompressionFormat.BZip2,
-            "xz" or "txz" => CompressionFormat.Xz,
-            "zst" or "zstd" or "tzst" => CompressionFormat.Zstd,
-            "wim" => CompressionFormat.Wim,
-            _ => Enum.TryParse<CompressionFormat>(s, ignoreCase: true, out var f) ? f : CompressionFormat.SevenZip,
+            case "7z" or "sevenzip": format = CompressionFormat.SevenZip; return true;
+            case "zip": format = CompressionFormat.Zip; return true;
+            case "tar": format = CompressionFormat.Tar; return true;
+            case "gz" or "gzip" or "tgz": format = CompressionFormat.GZip; return true;
+            case "bz2" or "bzip2" or "tbz2": format = CompressionFormat.BZip2; return true;
+            case "xz" or "txz": format = CompressionFormat.Xz; return true;
+            // Parses fine; CompressionEngine.ResolveFormat rejects it with the exact
+            // reason (7-Zip 26.04 has no zstd writer), which is a better message than
+            // anything this layer could invent.
+            case "zst" or "zstd" or "tzst": format = CompressionFormat.Zstd; return true;
+            case "wim": format = CompressionFormat.Wim; return true;
+        }
+
+        format = CompressionFormat.SevenZip;
+        var readOnly = lower switch
+        {
+            "rar" or "r00" or "rev" => "RAR",
+            "iso" => "ISO",
+            "cab" => "CAB",
+            "lzh" or "lha" => "LZH",
+            "arj" => "ARJ",
+            "cpio" => "CPIO",
+            "rpm" => "RPM",
+            "deb" => "DEB",
+            "apk" => "APK",
+            "jar" => "JAR",
+            "vhd" => "VHD",
+            "squashfs" => "SquashFS",
+            _ => null,
         };
-        return true;
+        error = readOnly is null
+            ? $"无法识别的格式「{s}」。可创建的格式：7z / zip / tar / gz / bz2 / xz / wim。"
+            : $"「{readOnly}」只能解压，不能创建。请改用 7z / zip / tar / gz / bz2 / xz / wim 之一。";
+        return false;
     }
+
+    /// <summary>
+    /// Formats 7-Zip can read but not write. Named here so an output path that promises
+    /// one of them gets a straight answer instead of a file whose extension lies.
+    /// </summary>
+    private static bool IsReadOnlyFormatName(string ext) =>
+        ext.TrimStart('.').ToLowerInvariant() is "rar" or "r00" or "rev" or "iso" or "cab"
+            or "lzh" or "lha" or "arj" or "cpio" or "rpm" or "deb" or "apk" or "jar" or "vhd" or "squashfs";
 
     /// <summary>Parse a size string like "100KB", "1MB", "500" (bytes) into bytes.</summary>
     private static bool TryParseSize(string? s, out long bytes)

@@ -1,0 +1,699 @@
+<!DOCTYPE html>
+<html lang="zh-CN">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>超速解压缩 — 竖屏 32.9 秒（抖音比例）</title>
+<meta name="description" content="超速解压缩竖屏宣传片：10 GB 分卷包边解边释放、能解 60 余种格式、速度与 7-Zip 相当、免费无广告开源、右键菜单好用。">
+<!--
+  竖屏宣传片 · 1080×1920（9:16，抖音/视频号）· 单文件 · 无外部依赖
+  ----------------------------------------------------------------------
+  版式规则（全片统一，改坐标前先读这三行）：
+    · 内容列宽 960 居中 → 左右各 60 边距（--col / --colX）
+    · 每个站的标题一律 y=330，站的主体一律 y=540（--headY / --bodyY）
+    · 任何独立块按自身宽度在这 960 列里居中
+    · 安全区 y ≤ 1500（抖音底部约 420 px 会被界面挡住）
+    · 圆角：大卡 18 / 卡片 16 / 小标签 12 / 条 10
+  剧本（2026-10-14 第二稿，按反馈改）：
+    · 开场不再单独"提问"，而是**包一落下就直接演示**逐卷释放 —— 原来第一段和第二段
+      都在讲"占两份空间"，重复，已合并成一站
+    · 「格式多」与「速度快」两站各给 3.6 秒，并且**把话说清楚**：
+      格式分"能解压 60 余种 / 能新建 7 种"两组（含 zst 只能解压的说明）；
+      速度写明测试条件（同一个 229 MB 包、同一台机器）、两个数字与结论
+  语法：自上而下的传送带；贯穿物是**一个指针**（第一站变成横向读条逐卷下扫 →
+        之后变回鼠标箭头走完全场）。顶部状态卡常驻。
+  契约：全部 f(t)、window.__seek(t)、?play / ?t= / ?hud；无随机数。
+-->
+<style>
+:root{
+  --window:#F4F5F7; --surface:#FFFFFF; --surface-alt:#FAFBFC;
+  --border:#E2E5E9; --border-soft:#EDEFF2;
+  --text:#1F2328; --dim:#6B7280; --faint:#A0A6AE;
+  --accent:#2F6FEB; --accent-soft:#E8F0FE; --accent-deep:#1C4FB8;
+  --danger:#D64545; --danger-soft:#FDECEC;
+  --green:#1E9E6A; --green-soft:#E7F6EF;
+  --shadow:0 1px 2px rgba(16,24,40,.05), 0 1px 3px rgba(16,24,40,.06);
+  --shadow-lg:0 10px 30px rgba(16,24,40,.10), 0 2px 8px rgba(16,24,40,.06);
+  --ui:"Segoe UI","Microsoft YaHei UI","PingFang SC","Hiragino Sans GB",system-ui,-apple-system,sans-serif;
+  --mono:ui-monospace,Consolas,"Cascadia Mono",monospace;
+  --col:960px; --colX:60px;
+  --headY:300px; --bodyY:540px;
+}
+*{box-sizing:border-box}
+html,body{margin:0;height:100%;background:#0B0E13;color:var(--text);font-family:var(--ui);
+  -webkit-font-smoothing:antialiased;overflow:hidden}
+#stagewrap{position:fixed;inset:0;display:grid;place-items:center}
+#stage{position:relative;width:1080px;height:1920px;background:var(--window);overflow:hidden;
+  transform-origin:center center;box-shadow:0 24px 80px rgba(0,0,0,.5)}
+#world{position:absolute;inset:0;will-change:transform}
+#ground{position:absolute;inset:0;
+  background-image:radial-gradient(circle at 1px 1px, rgba(31,35,40,.05) 1px, transparent 0);
+  background-size:34px 34px}
+#ground::after{content:"";position:absolute;inset:0;
+  background:radial-gradient(120% 70% at 50% 0%, rgba(255,255,255,.94), rgba(255,255,255,0) 60%)}
+
+/* ============ 常驻状态卡 ============ */
+#topbar{position:absolute;left:var(--colX);top:104px;width:var(--col)}
+#topbar .card{background:var(--surface);border:1px solid var(--border);border-radius:18px;
+  box-shadow:var(--shadow);padding:16px 22px 18px}
+#topbar .row1{display:flex;justify-content:space-between;align-items:baseline;margin-bottom:10px}
+#topbar .row1 b{font-size:25px;font-weight:700}
+#topbar .row1 span{font:16px/1 var(--mono);color:var(--dim)}
+#topbar .bar{position:relative;height:30px;border-radius:10px;background:var(--surface-alt);
+  border:1px solid var(--border);overflow:hidden}
+#topbar .seg{position:absolute;top:0;bottom:0}
+#segUsed{left:0;background:repeating-linear-gradient(135deg,#DFE3E8 0 7px,#E9EDF2 7px 14px)}
+#segPkg{background:repeating-linear-gradient(135deg,var(--accent) 0 7px,#4C84F0 7px 14px)}
+#segOut{background:linear-gradient(180deg,var(--green),#39B981)}
+#topbar .row2{display:flex;justify-content:space-between;margin-top:10px;font-size:15px}
+#topbar .row2 span{color:var(--dim)}
+#topbar .row2 em{font-style:normal;color:var(--green);font-weight:600}
+
+/* ============ 站标题 ============ */
+.st-head{position:absolute;left:var(--colX);top:var(--headY);width:var(--col);text-align:center;
+  will-change:transform,opacity}
+.st-head .kick{display:inline-block;font:600 15px/1 var(--ui);letter-spacing:.14em;color:var(--accent);
+  background:var(--accent-soft);border-radius:12px;padding:8px 14px}
+.st-head h2{margin:16px 0 0;font-size:58px;line-height:1.16;font-weight:800;letter-spacing:-.02em}
+.st-head h2 b{color:var(--accent)}
+.st-head p{margin:12px 0 0;font-size:22px;line-height:1.5;color:var(--dim)}
+.st-head p b{color:var(--text)}
+
+/* ============ 第一站：10 GB 分卷包 · 边解边释放 ============ */
+#volHead{position:absolute;left:var(--colX);top:548px;width:var(--col);text-align:center;
+  will-change:transform,opacity}
+#volHead b{font:700 24px/1 var(--mono)}
+#volHead span{font:19px/1 var(--mono);color:var(--faint);margin-left:12px}
+#spaceWrap{position:absolute;left:var(--colX);top:592px;width:var(--col);will-change:transform,opacity}
+#stack{width:720px;margin:0 auto;display:flex;flex-direction:column;gap:6px}
+.vrow{position:relative;height:54px;border-radius:12px;background:var(--surface);border:1px solid var(--border);
+  box-shadow:var(--shadow);display:flex;align-items:center;padding:0 20px;gap:14px;overflow:hidden;
+  will-change:transform,opacity}
+.vrow .fill{position:absolute;left:0;top:0;bottom:0;width:0;background:linear-gradient(90deg,#DCE7FB,#C9DAFA)}
+.vrow b{position:relative;font:600 20px/1 var(--mono);color:var(--dim)}
+.vrow i{position:relative;font:400 16px/1 var(--ui);font-style:normal;color:var(--faint);margin-left:auto}
+#bar{position:absolute;left:180px;top:0;width:720px;height:6px;border-radius:3px;background:var(--accent);
+  box-shadow:0 0 26px 6px rgba(47,111,235,.5);opacity:0;will-change:transform,opacity}
+
+#savedBig{position:absolute;left:0;top:1218px;width:1080px;text-align:center;will-change:transform,opacity}
+#savedBig .n{font:800 82px/1 var(--mono);color:var(--green);letter-spacing:-.02em;display:inline-block;transform-origin:center center}
+#savedBig .t{margin-top:10px;font-size:23px;color:var(--dim)}
+
+/* ============ 蒙太奇（统一 y=540） ============ */
+.mont{position:absolute;left:var(--colX);top:var(--bodyY);width:var(--col);will-change:transform,opacity}
+.mont .lead{text-align:center;font-size:52px;font-weight:800;letter-spacing:-.02em;margin-bottom:34px}
+.mont .lead b{color:var(--accent)}
+/* A 格式：两组分清 */
+#fmtA,#fmtB{padding:0 6px}
+.grp{display:flex;align-items:flex-start;gap:18px;margin-bottom:26px}
+.grp .glab{flex:0 0 auto;width:150px;text-align:right;padding-top:12px}
+.grp .glab b{display:block;font:700 27px/1 var(--ui)}
+.grp .glab span{display:block;font:15px/1.4 var(--ui);color:var(--faint);margin-top:7px}
+.grp.g1 .glab b{color:var(--accent)} .grp.g2 .glab b{color:var(--green)}
+.grp .gchips{flex:1;display:flex;flex-wrap:wrap;gap:12px}
+.ch{font:600 26px/1 var(--mono);background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:14px 18px;box-shadow:var(--shadow);will-change:transform,opacity}
+.grp.g1 .ch{background:var(--accent-soft);border-color:#CFE0FC;color:var(--accent-deep)}
+.grp.g2 .ch{background:var(--green-soft);border-color:#C9EBDC;color:#177A52}
+.ch.more{background:transparent;border-style:dashed;color:var(--faint);box-shadow:none}
+#fmtNote{margin-top:8px;text-align:center;font-size:19px;color:var(--faint)}
+/* B 速度：条件 + 数字 + 结论 */
+#raceCond{text-align:center;font-size:20px;color:var(--dim);margin-bottom:34px}
+#raceCond b{color:var(--text)}
+#race{display:flex;flex-direction:column;gap:26px;padding:0 10px}
+.lane{display:flex;align-items:center;gap:16px}
+.lane .who{width:210px;font:700 25px/1.15 var(--ui);text-align:right}
+.lane .whou{width:210px;font:700 25px/1.15 var(--ui);text-align:right;color:var(--accent)}
+.lane .track{position:relative;flex:1;height:48px;border-radius:12px;background:var(--surface-alt);
+  border:1px solid var(--border);overflow:hidden}
+.lane .go{position:absolute;left:0;top:0;bottom:0;width:0;border-radius:11px}
+.lane.us .go{background:linear-gradient(90deg,var(--accent),#4C84F0)}
+.lane.them .go{background:repeating-linear-gradient(135deg,#CDD3DA 0 8px,#DDE2E7 8px 16px)}
+.lane .tt{width:170px;text-align:right}
+.lane .tt u{display:block;font:700 26px/1 var(--mono);text-decoration:none}
+.lane .tt s{display:block;font:15px/1 var(--mono);color:var(--faint);text-decoration:none;margin-top:7px}
+#raceOut{margin-top:34px;text-align:center}
+#raceOut .bd{display:inline-block;font:700 26px/1 var(--ui);color:var(--green);background:var(--green-soft);
+  border-radius:12px;padding:14px 22px}
+#raceNote{margin-top:16px;text-align:center;font-size:19px;color:var(--faint)}
+/* C 场景 */
+#scenes2{display:grid;grid-template-columns:1fr 1fr;gap:24px;padding:0 10px}
+.scc{background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow);
+  padding:26px 24px;display:flex;gap:18px;align-items:center;will-change:transform,opacity}
+.scc .ic3{width:54px;height:54px;border-radius:12px;background:var(--accent-soft);display:grid;place-items:center;flex:0 0 auto}
+.scc .ic3 svg{width:27px;height:27px;stroke:var(--accent);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.scc .tx{font:600 25px/1.35 var(--ui)}
+/* D 附加功能 */
+#extras{display:flex;flex-direction:column;gap:20px;padding:0 40px}
+.ex{display:flex;align-items:center;gap:18px;background:var(--surface);border:1px solid var(--border);
+  border-radius:16px;box-shadow:var(--shadow);padding:22px 26px;will-change:transform,opacity}
+.ex .dot{width:14px;height:14px;border-radius:50%;background:var(--accent);flex:0 0 auto}
+.ex .tx{font:600 27px/1 var(--ui)}
+.ex .tx em{font-style:normal;color:var(--faint);font-weight:400;font-size:21px;margin-left:10px}
+/* E 简单 */
+#simple{padding:0 40px}
+#simple .win{background:var(--surface);border:1px solid var(--border);border-radius:18px;box-shadow:var(--shadow-lg);
+  padding:28px;min-height:320px;position:relative;overflow:hidden}
+#simple .win .tb2{height:34px;border-bottom:1px solid var(--border-soft);display:flex;align-items:center;gap:8px;margin:-12px -8px 20px}
+#simple .win .tb2 i{width:11px;height:11px;border-radius:50%;background:var(--border)}
+#simple .win .hint{text-align:center;font:600 30px/1.6 var(--ui);color:var(--dim)}
+#simple .win .hint b{color:var(--accent)}
+#dragChip{position:absolute;left:50%;top:130px;margin-left:-140px;will-change:transform,opacity}
+#dragChip .c2{background:var(--accent-soft);border:1.5px dashed var(--accent);border-radius:12px;
+  padding:16px 20px;font:600 24px/1 var(--mono);color:var(--accent-deep)}
+
+/* ============ 右键菜单（重点站） ============ */
+#menuStage{position:absolute;left:var(--colX);top:520px;width:var(--col)}
+#menuFile{position:absolute;left:15px;top:0;width:420px;will-change:transform,opacity}
+#menuFile .f{background:var(--surface);border:1px solid var(--border);border-radius:16px;box-shadow:var(--shadow-lg);
+  padding:22px;display:flex;gap:16px;align-items:center}
+#menuFile .f .ic4{width:54px;height:54px;border-radius:12px;background:var(--accent-soft);display:grid;place-items:center;flex:0 0 auto}
+#menuFile .f .ic4 svg{width:28px;height:28px;stroke:var(--accent);fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+#menuFile .f .nm2{font:700 24px/1.3 var(--mono)}
+#menuFile .f .sz2{font:15px/1 var(--mono);color:var(--faint);margin-top:6px}
+#menuFile .f.sel{border-color:var(--accent);background:var(--accent-soft)}
+#ctx{position:absolute;left:475px;top:52px;width:470px;background:var(--surface);border:1px solid var(--border);
+  border-radius:18px;box-shadow:var(--shadow-lg);padding:12px;will-change:transform,opacity}
+#ctx .mi{display:flex;align-items:center;gap:16px;padding:17px 16px;border-radius:12px;
+  font:600 26px/1 var(--ui);will-change:transform,opacity}
+#ctx .mi svg{width:29px;height:29px;stroke:var(--accent);fill:none;stroke-width:1.8;stroke-linecap:round;stroke-linejoin:round;flex:0 0 auto}
+#ctx .mi.hi{background:var(--hover)}
+#ctx .mi .k{margin-left:auto;font:400 19px/1 var(--ui);color:var(--faint)}
+#ctx .sep{height:1px;background:var(--border-soft);margin:10px 14px}
+#ctx .badge2{display:flex;gap:12px;padding:6px 14px 10px;will-change:opacity}
+#ctx .badge2 i{font:600 19px/1 var(--ui);font-style:normal;color:var(--green);background:var(--green-soft);
+  border-radius:12px;padding:10px 13px}
+#ctx .badge2 i.b2{color:var(--accent-deep);background:var(--accent-soft)}
+
+/* ============ 免费 / 开源 / 安全 ============ */
+#safeStage{position:absolute;left:var(--colX);top:var(--bodyY);width:var(--col);display:flex;flex-direction:column;gap:20px}
+.sf{display:flex;align-items:center;gap:20px;background:var(--surface);border:1px solid var(--border);
+  border-radius:16px;box-shadow:var(--shadow);padding:24px 28px;will-change:transform,opacity}
+.sf .ic5{width:56px;height:56px;border-radius:14px;display:grid;place-items:center;flex:0 0 auto}
+.sf.g .ic5{background:var(--green-soft)} .sf.g .ic5 svg{stroke:var(--green)}
+.sf.b .ic5{background:var(--accent-soft)} .sf.b .ic5 svg{stroke:var(--accent)}
+.sf .ic5 svg{width:28px;height:28px;fill:none;stroke-width:1.9;stroke-linecap:round;stroke-linejoin:round}
+.sf .tx2{font:700 29px/1 var(--ui)}
+.sf .tx2 em{font-style:normal;color:var(--dim);font-weight:400;font-size:21px;margin-left:12px}
+
+/* ============ 指针 ============ */
+#cur{position:absolute;left:0;top:0;opacity:0;will-change:transform,opacity;z-index:9}
+#cur svg{width:58px;height:58px;filter:drop-shadow(0 4px 7px rgba(16,24,40,.35))}
+
+/* ============ 尾卡 ============ */
+#end{position:absolute;inset:0;background:var(--window);display:grid;place-content:center;
+  text-align:center;opacity:0;will-change:opacity;padding:0 90px}
+#end .mark{font-size:94px;font-weight:800;letter-spacing:-.03em}
+#end .mark span{color:var(--accent)}
+#end .tag{margin-top:20px;font-size:30px;color:var(--dim)}
+#end .chips2{display:flex;gap:14px;justify-content:center;flex-wrap:wrap;margin-top:36px}
+#end .chips2 i{font:600 22px/1 var(--ui);font-style:normal;background:var(--surface);border:1px solid var(--border);
+  border-radius:12px;padding:14px 19px;box-shadow:var(--shadow);will-change:transform,opacity}
+#end .dl2{display:flex;gap:18px;justify-content:center;margin-top:44px}
+#end .dl2 b{display:flex;align-items:center;gap:12px;border:1px solid var(--border);background:var(--surface);
+  border-radius:16px;padding:22px 30px;font:700 28px/1 var(--ui);box-shadow:var(--shadow);will-change:transform,opacity}
+#end .dl2 b.hot{background:var(--accent);border-color:var(--accent);color:#fff}
+#end .dl2 b svg{width:28px;height:28px;stroke:currentColor;fill:none;stroke-width:2.1;stroke-linecap:round;stroke-linejoin:round}
+#end .url2{margin-top:38px;font:20px/1 var(--mono);color:var(--faint)}
+#urlmark{position:absolute;left:0;right:0;top:1700px;text-align:center;font:18px/1 var(--mono);color:var(--faint);
+  opacity:.7;will-change:opacity}
+
+/* 底部控件（页面交互，不属于片子） */
+#ui{position:fixed;left:0;right:0;bottom:0;padding:12px 18px;display:flex;align-items:center;gap:14px;
+  background:linear-gradient(180deg,rgba(11,14,19,0),rgba(11,14,19,.9));color:#C9D1DB;font:13px/1 var(--ui);
+  opacity:.3;transition:opacity .2s;z-index:20}
+#ui:hover{opacity:1}
+#ui button{appearance:none;border:1px solid rgba(255,255,255,.22);background:rgba(255,255,255,.06);color:#E7ECF3;
+  border-radius:8px;padding:7px 12px;font:13px/1 var(--ui);cursor:pointer}
+#ui button:hover{background:rgba(255,255,255,.13)}
+#ui input[type=range]{flex:1;accent-color:#4C84F0}
+#ui .t{font:12px/1 var(--mono);color:#8A93A0;min-width:112px;text-align:right}
+#dbg{position:fixed;left:14px;top:12px;font:11px/1.5 var(--mono);color:#8A93A0;z-index:30;display:none;white-space:pre}
+</style>
+</head>
+<body>
+<div id="stagewrap"><div id="stage"><div id="world">
+  <div id="ground"></div>
+
+  <!-- 常驻状态卡 -->
+  <div id="topbar">
+    <div class="card">
+      <div class="row1"><b>系统盘 · 128 GB</b><span id="diskFreeTxt">剩余 15.0 GB</span></div>
+      <div class="bar">
+        <div class="seg" id="segUsed"></div>
+        <div class="seg" id="segPkg"></div>
+        <div class="seg" id="segOut"></div>
+      </div>
+      <div class="row2">
+        <span>其他已用 103 GB</span>
+        <span>演示包 10 GB</span>
+        <span><em>剩余空间全程未被吃满</em></span>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 第一站：10 GB 分卷包 · 边解边释放（不再分开"提问/回答"） ========== -->
+  <div class="st-head" id="headSpace">
+    <div class="kick">分卷压缩包 · 解压</div>
+    <h2>一个 <b>10 GB</b> 的分卷包<br>读完一卷就<b>立刻释放</b></h2>
+    <p>全程只占一份空间，<b>不需要另腾一块周转区</b></p>
+  </div>
+  <div id="volHead"><b>Demo-10GB.7z</b><span>10.0 GB · 10 个分卷</span></div>
+  <div id="spaceWrap"><div id="stack"></div></div>
+  <div id="bar"></div>
+  <div id="savedBig"><div class="n">省下 10.0 GB</div><div class="t">盘上始终只留一份数据</div></div>
+
+  <!-- ========== 格式多（讲清楚：能解压 / 能新建） ========== -->
+  <div class="mont" id="montA">
+    <div class="lead">支持格式<b>多</b></div>
+    <div class="grp g1">
+      <div class="glab"><b>解压</b><span>60 余种</span></div>
+      <div class="gchips" id="fmtA"></div>
+    </div>
+    <div class="grp g2">
+      <div class="glab"><b>新建</b><span>7 种</span></div>
+      <div class="gchips" id="fmtB"></div>
+    </div>
+    <div id="fmtNote">压缩包、镜像、固实包都能直接解开；<b>zst</b> 等少数格式只支持解压</div>
+  </div>
+
+  <!-- ========== 速度快（讲清楚：条件 + 数字 + 结论） ========== -->
+  <div class="mont" id="montB">
+    <div class="lead">速度与 <b>7-Zip</b> 相当</div>
+    <div id="raceCond">同一个 <b>229 MB</b> 压缩包 · 同一台机器 · 各跑一次</div>
+    <div id="race">
+      <div class="lane us">
+        <span class="whou">超速解压缩</span>
+        <span class="track"><span class="go" id="goUs"></span></span>
+        <span class="tt"><u id="ttUs">—</u><s id="spUs">&nbsp;</s></span>
+      </div>
+      <div class="lane them">
+        <span class="who">7-Zip</span>
+        <span class="track"><span class="go" id="goThem"></span></span>
+        <span class="tt"><u id="ttThem">—</u><s id="spThem">&nbsp;</s></span>
+      </div>
+    </div>
+    <div id="raceOut"><div class="bd" id="raceBadge" style="opacity:0">速度基本持平</div></div>
+    <div id="raceNote">多花的时间不到 0.02 秒 —— 换来的是解压时不必占两份空间</div>
+  </div>
+
+  <!-- ========== 场景广 ========== -->
+  <div class="mont" id="montC">
+    <div class="lead">这些情况都用得上</div>
+    <div id="scenes2">
+      <div class="scc"><div class="ic3"><svg viewBox="0 0 24 24"><rect x="3" y="4" width="18" height="5" rx="1.6"/><rect x="3" y="12" width="18" height="5" rx="1.6"/></svg></div><div class="tx">拿到几十个分卷包</div></div>
+      <div class="scc"><div class="ic3"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4-4m4 4l4-4"/><path d="M5 19h14"/></svg></div><div class="tx">只想取出其中一个文件</div></div>
+      <div class="scc"><div class="ic3"><svg viewBox="0 0 24 24"><path d="M4 7h16v10H4z"/><path d="M8 11h8"/></svg></div><div class="tx">大文件要发给同事</div></div>
+      <div class="scc"><div class="ic3"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.4l2.6 2.6 4.6-5.2"/></svg></div><div class="tx">下载完先校验完整性</div></div>
+    </div>
+  </div>
+  <!-- ========== 附加功能 ========== -->
+  <div class="mont" id="montD">
+    <div class="lead">顺手就能用的小功能</div>
+    <div id="extras">
+      <div class="ex"><i class="dot"></i><div class="tx">压缩包完整性校验<em>CRC 逐项核对</em></div></div>
+      <div class="ex"><i class="dot"></i><div class="tx">批量重命名分卷<em>自动识别序号</em></div></div>
+      <div class="ex"><i class="dot"></i><div class="tx">往现有压缩包里追加文件<em>7z / zip / tar / wim</em></div></div>
+      <div class="ex"><i class="dot"></i><div class="tx">4 套主题 + 命令行<em>拖拽直出 · 零临时文件</em></div></div>
+    </div>
+  </div>
+  <!-- ========== 简单 ========== -->
+  <div class="mont" id="montE">
+    <div class="lead">用法就一句话</div>
+    <div id="simple">
+      <div class="win">
+        <div class="tb2"><i></i><i></i><i></i></div>
+        <div class="hint" style="margin-top:60px">把文件或整个压缩包<br><b>拖进来</b>就完事</div>
+        <div id="dragChip"><div class="c2">Demo-10GB.7z</div></div>
+      </div>
+    </div>
+  </div>
+
+  <!-- ========== 右键菜单（重点） ========== -->
+  <div class="st-head" id="headMenu">
+    <div class="kick">资源管理器右键菜单</div>
+    <h2>不用打开程序<br>右键就能干完</h2>
+  </div>
+  <div id="menuStage">
+    <div id="menuFile">
+      <div class="f"><div class="ic4"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2.5h8a2 2 0 012 2V18a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg></div><div><div class="nm2">Demo-10GB.7z.001</div><div class="sz2">10.0 GB</div></div></div>
+    </div>
+    <div id="ctx">
+      <div class="mi"><svg viewBox="0 0 24 24"><path d="M12 4v10m0 0l-4-4m4 4l4-4"/><path d="M5 19h14"/></svg>解压到当前文件夹</div>
+      <div class="mi"><svg viewBox="0 0 24 24"><path d="M3 7a2 2 0 012-2h4l2 2.5h8a2 2 0 012 2V18a2 2 0 01-2 2H5a2 2 0 01-2-2z"/></svg>解压到「Demo-10GB」文件夹</div>
+      <div class="mi hi"><svg viewBox="0 0 24 24"><path d="M12 3v6m0 0l-3-3m3 3l3-3"/><path d="M5 15v3h14v-3"/><path d="M9 21h6"/></svg>解压并删除已用完的分卷<span class="k">省空间</span></div>
+      <div class="mi"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="8.5"/><path d="M8.5 12.4l2.6 2.6 4.6-5.2"/></svg>测试压缩包完整性</div>
+      <div class="mi"><svg viewBox="0 0 24 24"><path d="M5 5h14v14H5z"/><path d="M9 9h6v6H9z"/></svg>用超速解压缩打开</div>
+      <div class="sep"></div>
+      <div class="badge2"><i>免管理员</i><i class="b2">Windows 11 一级菜单</i></div>
+    </div>
+  </div>
+
+  <!-- ========== 免费 / 开源 / 安全 ========== -->
+  <div class="st-head" id="headSafe">
+    <div class="kick">关于这个工具</div>
+    <h2>免费 · 无广告 · <b>开源</b></h2>
+  </div>
+  <div id="safeStage">
+    <div class="sf g"><div class="ic5"><svg viewBox="0 0 24 24"><path d="M12 3l7 3v5c0 4.5-3 8-7 10-4-2-7-5.5-7-10V6z"/><path d="M9 12l2 2 4-4"/></svg></div><div class="tx2">本地处理，不上传<em>不联网、不收集</em></div></div>
+    <div class="sf b"><div class="ic5"><svg viewBox="0 0 24 24"><circle cx="12" cy="12" r="9"/><path d="M12 8v8M8 12h8"/></svg></div><div class="tx2">完全免费，没有广告<em>也没有捆绑</em></div></div>
+    <div class="sf b"><div class="ic5"><svg viewBox="0 0 24 24"><path d="M9 18l-5-6 5-6"/><path d="M15 6l5 6-5 6"/></svg></div><div class="tx2">开源（MIT）<em>源码可查、可自行编译</em></div></div>
+    <div class="sf g"><div class="ic5"><svg viewBox="0 0 24 24"><rect x="4" y="10" width="16" height="10" rx="2"/><path d="M8 10V7a4 4 0 018 0v3"/></svg></div><div class="tx2">文件不出本机<em>口令也在本地校验</em></div></div>
+  </div>
+
+  <div id="cur"><svg viewBox="0 0 24 24"><path d="M4 2l14 9-6.2 1.4L9 20z" fill="#1F2328" stroke="#fff" stroke-width="1.6" stroke-linejoin="round"/></svg></div>
+
+  <!-- ========== 尾卡 ========== -->
+  <div id="end">
+    <div class="mark">超速<span>解压缩</span></div>
+    <div class="tag">解压快，还不占地方</div>
+    <div class="chips2"><i>免费</i><i>无广告</i><i>开源 MIT</i><i>免管理员</i></div>
+    <div class="dl2">
+      <b class="hot"><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 19h16"/></svg>下载便携版</b>
+      <b><svg viewBox="0 0 24 24"><path d="M12 3v12m0 0l-4.5-4.5M12 15l4.5-4.5"/><path d="M4 19h16"/></svg>下载安装版</b>
+    </div>
+    <div class="url2">ldl171354.github.io/SliceArc</div>
+  </div>
+  <div id="urlmark">ldl171354.github.io/SliceArc</div>
+</div></div></div>
+
+<div id="ui">
+  <button id="btnPlay">暂停</button>
+  <button id="btnReplay">重播</button>
+  <input id="scru" type="range" min="0" max="32900" value="0" step="10">
+  <span class="t" id="tTxt">0.00 / 32.90 s</span>
+</div>
+<div id="dbg"></div>
+
+<script>
+/* =====================================================================
+   节拍表（竖屏 33 秒 · 第二稿）
+   t(s)          站                 时长    什么在动                         贯穿
+   0.00–7.00     ①10 GB 包·边解边释放 7.00s  标题→卷柱长出→"不用"→逐卷命中→省下   指针(读条)
+   7.00–7.45     过场                0.45s  整屏上滑                          读条→指针
+   7.45–11.05    ②格式多             3.60s  两组格式分"解压/新建"慢慢落下        指针
+   11.05–14.65   ③速度快             3.60s  两条赛道冲线 + 大数字 + 结论        指针
+   14.65–16.95   ④场景广             2.30s  4 张卡错拍落                       指针
+   16.95–18.95   ⑤附加功能           2.00s  4 行功能条滑入                     指针
+   18.95–20.65   ⑥简单               1.70s  文件被拖进窗口                     指针
+   20.65–26.05   ⑦右键菜单           5.40s  菜单展开 + 6 动词错拍 + 高亮         指针
+   26.05–29.25   ⑧免费/开源/安全     3.20s  4 张保证卡逐个落                    指针
+   29.25–33.00   ⑨尾卡               3.75s  字标、4 标签、两个按钮、网址         —
+   ===================================================================== */
+const T_END = 32.9;
+
+/* ---------- 曲线 ---------- */
+const clamp=(v,a=0,b=1)=>Math.max(a,Math.min(b,v));
+const seg=(t,t0,t1)=>t1===t0?(t>=t1?1:0):clamp((t-t0)/(t1-t0));
+const lerp=(a,b,k)=>a+(b-a)*k;
+const eOutExpo=u=>u<=0?0:u>=1?1:(1-Math.pow(2,-10*u))/(1-Math.pow(2,-10));
+const eInOutSine=u=>-(Math.cos(Math.PI*u)-1)/2;
+const eOutBack=u=>{const s=1.8;return 1+(s+1)*Math.pow(u-1,3)+s*Math.pow(u-1,2);};
+function springStep(tau,zeta=0.6,omega=20){
+  if(tau<=0)return 0;
+  const wd=omega*Math.sqrt(Math.max(1e-6,1-zeta*zeta));
+  return 1-Math.exp(-zeta*omega*tau)*(Math.cos(wd*tau)+(zeta*omega/wd)*Math.sin(wd*tau));
+}
+const SW=(t,t0,dur,zeta=0.6,omega=20)=>springStep(seg(t,t0,t0+dur)*dur,zeta,omega);
+const J=[0,.37,.72,.19,.58,.91,.26,.64,.08,.83,.45,.53];
+const jit=i=>J[i%J.length];
+
+/* ---------- 站时间表 ---------- */
+const T_ONE0=0.00,  T_ONE1=7.00;      // ①合并后的第一站
+const T_WIPE0=7.00, T_WIPE1=7.45;
+const MONT=[
+  {id:'montA', t0:7.45,  t1:11.45},   // ②格式多 4.00s（两组分开落，给足读的时间）
+  {id:'montB', t0:11.45, t1:15.05},   // ③速度快 3.60s（条件+数字+结论）
+  {id:'montC', t0:15.05, t1:17.25},   // ④场景广 2.20s
+  {id:'montD', t0:17.25, t1:19.15},   // ⑤附加功能 1.90s
+  {id:'montE', t0:19.15, t1:20.75}    // ⑥简单 1.60s
+];
+const T_MENU0=20.75, T_MENU1=26.15;
+const T_SAFE0=26.15, T_SAFE1=29.25;
+const T_END0=29.25,  T_END1=32.90;
+
+/* ---------- 数据：10 卷 × 1 GB ---------- */
+const N=10, GB_PKG=10.0, GB_PER=1.0;
+const GB_USED=103, GB_TOTAL=128;                 // 其他已用 103 → 盘面剩 15 GB
+const SPANS=[.40,.36,.42,.34,.40,.36,.44,.32,.38];   // 命中间隔刻意不等
+const T_FIRST=2.90;
+const HIT=[]; { let a=T_FIRST; for(let i=0;i<N;i++){ HIT.push(a); a+=SPANS[Math.min(i,SPANS.length-1)]; } }
+const T_LAST=HIT[N-1];                            // ≈6.32
+
+/* ---------- 舞台 ---------- */
+const $=id=>document.getElementById(id);
+const stage=$('stage'), world=$('world');
+function fit(){ stage.style.transform='scale('+Math.min(innerWidth/1080,innerHeight/1920)+')'; }
+addEventListener('resize',fit); fit();
+
+/* ---------- 卷柱 ---------- */
+const stackEl=$('stack'), rows=[];
+for(let i=0;i<N;i++){
+  const d=document.createElement('div'); d.className='vrow';
+  d.innerHTML='<div class="fill"></div><b>.'+String(i+1).padStart(3,'0')+'</b><i>1.0 GB</i>';
+  stackEl.appendChild(d);
+  rows.push({el:d, fill:d.querySelector('.fill')});
+}
+/* ---------- 格式标签：两组（解压 / 新建），分开讲清楚 ---------- */
+const FMT_EXTRACT=['7z','zip','rar','tar','gz','bz2','xz','zst','cab','iso','wim','lzh'];
+const FMT_CREATE=['7z','zip','tar','gz','bz2','xz','wim'];
+const chipsE=[], chipsC=[];
+FMT_EXTRACT.forEach(f=>{ const s=document.createElement('span'); s.className='ch'; s.textContent=f; $('fmtA').appendChild(s); chipsE.push(s); });
+{ const m=document.createElement('span'); m.className='ch more'; m.textContent='… + 60 余种'; $('fmtA').appendChild(m); chipsE.push(m); }
+FMT_CREATE.forEach(f=>{ const s=document.createElement('span'); s.className='ch'; s.textContent=f; $('fmtB').appendChild(s); chipsC.push(s); });
+
+/* ---------- 引用 ---------- */
+const topbar=$('topbar'), segUsed=$('segUsed'), segPkg=$('segPkg'), segOut=$('segOut');
+const headSpace=$('headSpace'), volHead=$('volHead'), spaceWrap=$('spaceWrap'), bar=$('bar');
+const savedBig=$('savedBig');
+const headMenu=$('headMenu'), menuStage=$('menuStage'), menuFile=$('menuFile'), ctx=$('ctx');
+const mis=[...ctx.querySelectorAll('.mi')], badge2=ctx.querySelector('.badge2');
+const headSafe=$('headSafe'), safeStage=$('safeStage'), sfs=[...safeStage.querySelectorAll('.sf')];
+const monts=MONT.map(m=>document.getElementById(m.id));
+const cur=$('cur'), endEl=$('end'), urlmark=$('urlmark');
+const endMark=endEl.querySelector('.mark'), endTag=endEl.querySelector('.tag');
+const endChips=[...endEl.querySelectorAll('.chips2 i')], endDl=[...endEl.querySelectorAll('.dl2 b')], endUrl=endEl.querySelector('.url2');
+const goUs=$('goUs'), goThem=$('goThem'), ttUs=$('ttUs'), ttThem=$('ttThem'), spUs=$('spUs'), spThem=$('spThem'), raceBadge=$('raceBadge');
+const scenes2=[...$('scenes2').querySelectorAll('.scc')], extras=[...$('extras').querySelectorAll('.ex')];
+const dragChip=$('dragChip');
+
+/* 几何常量（与 CSS 对齐） */
+const BARW=916, PXG=BARW/GB_TOTAL;
+const W_USED=GB_USED*PXG, W_PKG=GB_PKG*PXG;
+const ROW_TOP=592, ROW_PITCH=54+6, ROW_H=54;
+const ROW_CX=i=>ROW_TOP+i*ROW_PITCH+ROW_H/2;
+
+/* =====================================================================
+   每帧
+   ===================================================================== */
+function __seek(t){
+  window.__t=t;
+  const amp=.4*(1-seg(t,T_SAFE1-.3,T_SAFE1+.3));
+  world.style.transform='translate('+(Math.sin(t*.29)*4*amp).toFixed(2)+'px,'+(Math.sin(t*.21+1.3)*3*amp).toFixed(2)+'px)';
+
+  /* ---------- 常驻状态卡 ---------- */
+  const tbIn=eOutExpo(seg(t,.05,.60));
+  topbar.style.opacity=String(seg(t,.05,.40));
+  topbar.style.transform='translateY('+((1-tbIn)*-18).toFixed(2)+'px)';
+  let done=0; for(let i=0;i<N;i++) if(t>=HIT[i]) done++;
+  let freedOut=0; for(let i=0;i<N;i++) freedOut+=eOutExpo(seg(t,HIT[i],HIT[i]+.26));
+  segUsed.style.width=(W_USED*seg(t,.20,.80)).toFixed(1)+'px';
+  segPkg.style.left=W_USED.toFixed(1)+'px';
+  segPkg.style.width=(W_PKG*eOutExpo(seg(t,.30,.90))).toFixed(1)+'px';
+  segOut.style.left=W_USED.toFixed(1)+'px';
+  segOut.style.width=(freedOut*GB_PER*PXG).toFixed(1)+'px';
+
+  /* ---------- 传送带 ---------- */
+  // 传送带：出场必须在入场之前**彻底消失**，否则上一站的字会和下一站的字叠在一起
+  // （曾经的 bug：两者在时间上重叠 0.4s → 密集扫描测到 25 万 px² 的文字压盖）
+  const stBody=(el,t0,t1,inDur=.55,outDur=.45,rise0=45)=>{
+    const oIn  = seg(t, t0+.15, t0+.15+inDur*.7);       // 进入：晚 0.15s 才开始
+    const oOut = 1 - seg(t, t1-.30, t1+.10);            // 离开：t1+0.10 已完全透明
+    const rise = lerp(rise0,0,eOutExpo(seg(t,t0+.15,t0+.15+inDur)));
+    const fall = lerp(0,-rise0,eOutExpo(seg(t,t1-.30,t1+.10)));
+    el.style.opacity=String(clamp(oIn*oOut));
+    el.style.transform='translateY('+(rise+fall).toFixed(1)+'px)';
+  };
+  const station=(el,t0,t1,inDur=.55,outDur=.45)=>stBody(el,t0,t1,inDur,outDur,45);
+
+  /* ================= ① 10 GB 分卷包 · 边解边释放 ================= */
+  // 标题：0–0.8 落位；卷柱：0.8–1.6 错拍长出；印章：1.6–2.5；命中 2.90–6.32；数字 6.45–7.0
+  station(headSpace,T_ONE0,T_ONE1,.6,.5);
+  const vhIn=eOutExpo(seg(t,.75,1.25));
+  volHead.style.opacity=String(seg(t,.75,1.15)*(1-seg(t,T_ONE1-.45,T_ONE1-.15)));   // 先淡出，再让卷柱上滑，避免蹭到
+  volHead.style.transform='translateY('+((1-vhIn)*20).toFixed(1)+'px)';
+  stBody(spaceWrap,T_ONE0,T_ONE1,.55,.45,40);
+  const spOut=seg(t,T_ONE1-.30,T_ONE1+.10);              // 第一站其余元素共用这个「已离场」信号
+  let cur=-1; for(let i=0;i<N;i++) if(t>=HIT[i]-.22) cur=i;
+  rows.forEach((r,i)=>{
+    const inp=seg(t,.80+i*.06,.80+i*.06+.42);
+    const readP=eOutExpo(seg(t,HIT[i]-.22,HIT[i]-.02));
+    const cp=seg(t,HIT[i],HIT[i]+.30);
+    const cu=eOutExpo(cp), sqz=cp>0&&cp<1?1+.16*Math.sin(cp*Math.PI):1;
+    r.fill.style.width=(readP*(1-cp)*100).toFixed(1)+'%';
+    r.el.style.opacity=String(inp*(1-cp));
+    r.el.style.transform='translateX('+(cu*150).toFixed(1)+'px) scale('+(1-.55*cu).toFixed(3)+','+((1-.55*cu)*sqz).toFixed(3)+')';
+    const fl=Math.sin(clamp(cp/.7)*Math.PI);
+    r.el.style.boxShadow=fl>0
+      ? '0 0 '+(32*fl).toFixed(0)+'px '+(10*fl).toFixed(0)+'px rgba(30,158,106,'+(.55*fl).toFixed(2)+')'
+      : 'var(--shadow)';
+  });
+  const barOn=seg(t,1.20,1.65)*(1-seg(t,6.5,6.9));
+  const snap=eOutExpo(seg(t,cur<0?0:HIT[cur]-.22, cur<0?0:HIT[cur]-.04));
+  const by=cur<0?ROW_CX(0)-46:lerp(cur===0?ROW_CX(0)-46:ROW_CX(cur-1)-3, ROW_CX(cur)-3, snap);
+  bar.style.opacity=String(barOn);
+  bar.style.transform='translateY('+by.toFixed(1)+'px)';
+  savedBig.style.opacity=String(seg(t,T_LAST+.14,T_LAST+.62)*(1-spOut));
+  savedBig.style.transform='none';                                   // 整幅宽容器不缩放（会越界）
+  savedBig.querySelector('.n').style.transform='scale('+(0.9+0.1*SW(t,T_LAST+.14,.7,.45)).toFixed(3)+')';
+
+  /* ---------- 过场 ---------- */
+  const wipeShift=seg(t,T_WIPE0,T_WIPE1+.2);
+
+  /* ================= 蒙太奇 ================= */
+  MONT.forEach((m,i)=>station(monts[i],m.t0,m.t1,.5,.4));
+  /* ② 格式多：两组分别慢慢落下（解压组 15 个 0.11s 一落；新建组 7 个） */
+  chipsE.forEach((c,i)=>{
+    const p=seg(t,MONT[0].t0+.45+i*.11,MONT[0].t0+.45+i*.11+.45), u=eOutExpo(p);
+    c.style.opacity=String(p*(1-seg(t,MONT[0].t1-.45,MONT[0].t1+.05)));
+    c.style.transform='translateY('+((1-u)*34*jit(i)).toFixed(1)+'px) scale('+(0.94+0.06*u).toFixed(3)+')';
+  });
+  const tC0=MONT[0].t0+.45+chipsE.length*.11+.22;
+  chipsC.forEach((c,i)=>{
+    const p=seg(t,tC0+i*.13,tC0+i*.13+.45), u=eOutExpo(p);
+    c.style.opacity=String(p*(1-seg(t,MONT[0].t1-.45,MONT[0].t1+.05)));
+    c.style.transform='translateY('+((1-u)*34).toFixed(1)+'px) scale('+(0.94+0.06*u).toFixed(3)+')';
+  });
+  { const p=seg(t,tC0+chipsC.length*.13+.20,tC0+chipsC.length*.13+.60), u=eOutExpo(p);
+    $('fmtNote').style.opacity=String(p*(1-seg(t,MONT[0].t1-.45,MONT[0].t1+.05)));
+    $('fmtNote').style.transform='translateY('+((1-u)*20).toFixed(1)+'px)'; }
+  /* ③ 速度快：条件 → 冲线 → 数字 → 结论 → 小字 */
+  { const m=MONT[1], rp=eInOutSine(seg(t,m.t0+.70,m.t0+1.70)), fin=seg(t,m.t0+1.70,m.t0+1.95);
+    goUs.style.width=(clamp(rp*1.008)*100).toFixed(1)+'%'; goThem.style.width=(rp*100).toFixed(1)+'%';
+    ttUs.textContent=rp>0?'3.04 秒':'—'; ttThem.textContent=rp>0?'3.03 秒':'—';
+    spUs.textContent=rp>=1?'≈ 75.3 MB/s':''; spThem.textContent=rp>=1?'≈ 75.6 MB/s':'';
+    raceBadge.style.opacity=String(fin);
+    raceBadge.style.transform='scale('+(0.9+0.1*eOutBack(seg(t,m.t0+1.70,m.t0+2.05))).toFixed(3)+')';
+    $('raceNote').style.opacity=String(seg(t,m.t0+2.10,m.t0+2.55)*(1-seg(t,m.t1-.45,m.t1+.05))); }
+  /* ④ 场景广 */
+  scenes2.forEach((c,i)=>{
+    const p=seg(t,MONT[2].t0+.35+i*.18,MONT[2].t0+.35+i*.18+.45), u=eOutExpo(p);
+    c.style.opacity=String(p); c.style.transform='translateY('+((1-u)*40).toFixed(1)+'px) scale('+(0.95+0.05*u).toFixed(3)+')';
+  });
+  /* ⑤ 附加功能 */
+  extras.forEach((c,i)=>{
+    const p=seg(t,MONT[3].t0+.32+i*.20,MONT[3].t0+.32+i*.20+.42), u=eOutExpo(p);
+    c.style.opacity=String(p); c.style.transform='translateX('+((1-u)*-56).toFixed(1)+'px)';
+  });
+  /* ⑥ 简单 */
+  { const m=MONT[4], p=eInOutSine(seg(t,m.t0+.42,m.t0+1.10));
+    dragChip.style.opacity=String(seg(t,m.t0+.28,m.t0+.58));
+    dragChip.style.transform='translate('+lerp(0,90,p).toFixed(1)+'px,'+lerp(-70,60,p).toFixed(1)+'px) scale('+(1-.06*p).toFixed(3)+')'; }
+
+  /* ---------- ⑦ 右键菜单 ---------- */
+  station(headMenu,T_MENU0,T_MENU1);
+  stBody(menuStage,T_MENU0,T_MENU1,.5,.4,60);
+  menuFile.style.opacity=String(seg(t,T_MENU0+.35,T_MENU0+.85));
+  menuFile.querySelector('.f').className='f'+(seg(t,T_MENU0+1.3,T_MENU0+1.7)>.5?' sel':'');
+  const ctxIn=eOutExpo(seg(t,T_MENU0+.75,T_MENU0+1.35));
+  ctx.style.opacity=String(seg(t,T_MENU0+.75,T_MENU0+1.2)*(1-seg(t,T_MENU1-.2,T_MENU1+.4)));
+  ctx.style.transform='translateY('+((1-ctxIn)*-16).toFixed(1)+'px) scale('+(0.96+0.04*ctxIn).toFixed(3)+')';
+  mis.forEach((m,i)=>{
+    const p=seg(t,T_MENU0+1.30+i*.28,T_MENU0+1.30+i*.28+.42), u=eOutExpo(p);
+    m.style.opacity=String(p*(1-seg(t,T_MENU1-.25,T_MENU1+.2)));
+    m.style.transform='translateX('+((1-u)*24).toFixed(1)+'px)';
+  });
+  badge2.style.opacity=String(seg(t,T_MENU0+3.15,T_MENU0+3.70)*(1-seg(t,T_MENU1-.25,T_MENU1+.2)));
+
+  /* ---------- ⑧ 免费 / 开源 / 安全 ---------- */
+  station(headSafe,T_SAFE0,T_SAFE1);
+  stBody(safeStage,T_SAFE0,T_SAFE1,.5,.4,40);
+  sfs.forEach((c,i)=>{
+    const p=seg(t,T_SAFE0+.35+i*.22,T_SAFE0+.35+i*.22+.5), u=eOutBack(p);
+    c.style.opacity=String(p); c.style.transform='translateY('+((1-u)*40).toFixed(1)+'px) scale('+(0.95+0.05*clamp(u)).toFixed(3)+')';
+  });
+
+  /* ---------- ⑨ 尾卡 ---------- */
+  endEl.style.opacity=String(seg(t,T_END0,T_END0+.9));
+  const em=SW(t,T_END0,.85,.5);
+  endMark.style.opacity=String(seg(t,T_END0+.12,T_END0+.60));
+  endMark.style.transform='translateY('+((1-em)*30).toFixed(1)+'px) scale('+(0.93+0.07*em).toFixed(3)+')';
+  endTag.style.opacity=String(seg(t,T_END0+.55,T_END0+1.05));
+  endChips.forEach((c,i)=>{
+    const p=seg(t,T_END0+.85+i*.12,T_END0+.85+i*.12+.45), u=eOutBack(p);
+    c.style.opacity=String(p); c.style.transform='translateY('+((1-u)*22).toFixed(1)+'px) scale('+(0.9+0.1*clamp(u)).toFixed(3)+')';
+  });
+  endDl.forEach((b,i)=>{
+    const p=seg(t,T_END0+1.45+i*.15,T_END0+1.45+i*.15+.60), u=eOutExpo(p);
+    b.style.opacity=String(p); b.style.transform='translateY('+((1-u)*18).toFixed(1)+'px)';
+  });
+  endUrl.style.opacity=String(seg(t,T_END0+2.05,T_END0+2.55));
+  urlmark.style.opacity=String(0.7*(1-seg(t,T_END0,T_END0+.5)));
+
+  /* ---------- 指针（纯 t 函数） ---------- */
+  const SPe=ROW_CX(N-1)-30;
+  const MW=[760,470];
+  const MSPOT=[[820,740],[880,900],[840,1080],[860,800],[700,1140]];
+  const MP0=[430,600], MP1=[880,860], ME=[880,1000];
+  let cx=760, cy=ROW_CX(0)-30, cop=1;
+  if(t<T_ONE1){                                       // ①第一站：指针＝读条的头
+    cx=760; cy=(cur<0?ROW_CX(0)-30:ROW_CX(cur)-30); cop=seg(t,1.20,1.60);
+  } else if(t<T_WIPE1){                               // 过场
+    const p=eInOutSine(seg(t,T_ONE1,T_WIPE1)); cx=lerp(760,MW[0],p); cy=lerp(SPe,MW[1],p); cop=1;
+  } else if(t<MONT[MONT.length-1].t1){                // 蒙太奇：航点之间跳
+    const idx=Math.max(0,MONT.findIndex(m=>t>=m.t0&&t<m.t1));
+    const from=idx>0?MSPOT[idx-1]:MW, to=MSPOT[idx];
+    const p=eInOutSine(seg(t,MONT[idx].t0,MONT[idx].t0+.55));
+    cx=lerp(from[0],to[0],p); cy=lerp(from[1],to[1],p); cop=1;
+  } else if(t<T_MENU0){                               // → 菜单入口
+    const p=eInOutSine(seg(t,MONT[MONT.length-1].t1,T_MENU0));
+    cx=lerp(MSPOT[MSPOT.length-1][0],MP0[0],p); cy=lerp(MSPOT[MSPOT.length-1][1],MP0[1],p); cop=1;
+  } else if(t<T_MENU1){                               // 菜单
+    const p=eInOutSine(seg(t,T_MENU0+.9,T_MENU0+1.7));
+    cx=lerp(MP0[0],MP1[0],p); cy=lerp(MP0[1],MP1[1],p); cop=1;
+  } else {                                            // 之后滑出
+    const p=eInOutSine(seg(t,T_MENU1,T_SAFE0+.5));
+    cx=MP1[0]; cy=lerp(MP1[1],ME[1],p); cop=1-seg(t,T_MENU1+.2,T_SAFE0+.3);
+  }
+  cur.style.opacity=String(clamp(cop));
+  cur.style.transform='translate('+cx.toFixed(1)+'px,'+cy.toFixed(1)+'px)';
+}
+
+/* =====================================================================
+   播放器
+   ===================================================================== */
+const q=new URLSearchParams(location.search);
+const pinned=q.has('t')?parseFloat(q.get('t')):null;
+let playing=pinned===null, clock=pinned===null?0:clamp(pinned,0,T_END);
+const scru=$('scru'), tTxt=$('tTxt'), btnPlay=$('btnPlay'), dbg=$('dbg');
+if(q.has('hud')) dbg.style.display='block';
+if(pinned!==null||q.has('clean')) $('ui').style.display='none';
+function paint(t){
+  __seek(t);
+  tTxt.textContent=t.toFixed(2)+' / '+T_END.toFixed(2)+' s';
+  scru.value=String(Math.round(t*1000));
+  if(dbg.style.display==='block') dbg.textContent='t='+t.toFixed(2)+'s  卷 '+(HIT.filter(h=>h<=t).length)+'/'+N;
+}
+paint(clock);
+btnPlay.textContent=playing?'暂停':'播放';
+let last=performance.now();
+function loop(now){
+  const dt=Math.min(.05,(now-last)/1000); last=now;
+  if(playing){ clock+=dt; if(clock>=T_END) clock=0; paint(clock); }
+  requestAnimationFrame(loop);
+}
+requestAnimationFrame(loop);
+btnPlay.onclick=()=>{ playing=!playing; btnPlay.textContent=playing?'暂停':'播放'; };
+$('btnReplay').onclick=()=>{ clock=0; playing=true; btnPlay.textContent='暂停'; paint(0); };
+scru.oninput=()=>{ clock=parseFloat(scru.value)/1000; playing=false; btnPlay.textContent='播放'; paint(clock); };
+
+window.__seek=__seek;
+window.__meta={
+  total:T_END, fps:30, size:[1080,1920],
+  beats:{one:[T_ONE0,T_ONE1], wipe:[T_WIPE0,T_WIPE1], montage:MONT.map(m=>[m.t0,m.t1]),
+         menu:[T_MENU0,T_MENU1], safe:[T_SAFE0,T_SAFE1], end:[T_END0,T_END1]},
+  hits:HIT.slice(), inFrame:['topbar','cur','bar']
+};
+</script>
+</body>
+</html>

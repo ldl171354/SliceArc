@@ -15,6 +15,7 @@
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
             <RowDefinition Height="Auto" />
+            <RowDefinition Height="Auto" />
         </Grid.RowDefinitions>
 
         <StackPanel Grid.Row="0" Orientation="Horizontal">
@@ -32,9 +33,21 @@
                    Foreground="{DynamicResource B.TextDim}"
                    Text="分卷压缩包解压 / 压缩工具，基于 7-Zip 引擎。支持 .z01 / .001 / .part1.rar 等分卷格式、零临时文件拖出、解压后自动回收分卷、Windows 11 一级右键菜单。" />
 
-        <StackPanel Grid.Row="2" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,18,0,0">
-            <Button Style="{StaticResource PrimaryButton}" Content="确定" Width="84" Height="28"
-                    Click="OnOkClick" IsDefault="True" />
-        </StackPanel>
-    </Grid>
+        <StackPanel Grid.Row="2" Margin="0,18,0,0">
+                <StackPanel Orientation="Horizontal" HorizontalAlignment="Left">
+                    <Button x:Name="CheckUpdateButton" Style="{StaticResource PrimaryButton}"
+                            Content="检查更新" Width="96" Height="28" Click="OnCheckUpdateClick" />
+                    <Button x:Name="GoButton" Style="{StaticResource PrimaryButton}"
+                            Content="前往下载" Width="96" Height="28" Margin="8,0,0,0"
+                            Click="OnGoClick" Visibility="Collapsed" />
+                </StackPanel>
+                <TextBlock x:Name="UpdateResultText" Margin="0,8,0,0" TextWrapping="Wrap"
+                           Foreground="{DynamicResource B.TextDim}" Text="" />
+            </StackPanel>
+
+            <StackPanel Grid.Row="3" Orientation="Horizontal" HorizontalAlignment="Right" Margin="0,14,0,0">
+                <Button Style="{StaticResource PrimaryButton}" Content="确定" Width="84" Height="28"
+                        Click="OnOkClick" IsDefault="True" />
+            </StackPanel>
+        </Grid>
 </Window>

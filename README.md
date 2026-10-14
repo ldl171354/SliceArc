@@ -14,7 +14,7 @@ Windows 上的**分卷压缩包解压器**。格式解析全部交给 7-Zip 官�
 
 ## 更新日志
 
-当前版本 **0.4.2**，完整变更见 [CHANGELOG.md](CHANGELOG.md)（0.4.2 修了一个 RAR 分卷边解边删会删坏压缩包的问题，并新增「向现有压缩包追加 / 更新文件」）。
+当前版本 **0.4.3**，完整变更见 [CHANGELOG.md](CHANGELOG.md)（0.4.3 新增压缩包内图片预览、缩略图视图与更新检查，并修掉一批错误提示问题——含切片分卷缺卷静默“成功”）
 
 ## 功能一览
 
@@ -53,7 +53,8 @@ tests/SliceArc.Probe/  端到端自检（造包 → 解压 → SHA256 → 删卷
 tests/SliceArc.DropProbe/ 进程内真实 OLE 投递（拖出窗口 / 拖入窗口）
 tools/                 打包、图标生成、CLI 端到端测试、UI 自动化检查
 docs/index.html        项目落地页
-docs/promo.html        22 秒宣传动画（单文件时基动画，逐帧可导出视频）
+docs/promo.html        22 秒宣传动画 · 横屏 16:9（单文件时基动画，逐帧可导出视频）
+docs/promo-vertical.html  33 秒竖屏 9:16 版（抖音比例，全面介绍 + 右键菜单）
 tools/promo-*.mjs      动画的渲染/探针工具（用 CDP 驱动无头浏览器，不依赖任何 npm 包）
 ```
 

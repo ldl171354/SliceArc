@@ -99,6 +99,13 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
     private string? _lastEntry;
     private string? _failureReason;
     private string? _failureHint;
+
+    /// <summary>
+    /// Paths passed via IncludePaths that no entry matched, filled by SelectEntries.
+    /// An empty selection that the caller asked for is a user-facing mistake, not a
+    /// quiet success.
+    /// </summary>
+    private List<string>? _unmatchedIncludePaths;
     private bool _cancelled;
     private bool _bombTripped;
     private bool _passwordRequested;
@@ -173,6 +180,18 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
     private void OpenCore()
     {
         var group = VolumeDetector.DetectGroup(_inputPath) ?? SingleFileGroup(_inputPath);
+
+        // A name that ends in three or more digits (a.7z.001, blob.002) declares itself a
+        // member of a sliced volume set. If the detector could not find the siblings, the
+        // set is incomplete: decoding the lone slice "succeeds" with a truncated entry and
+        // no CRC complaint, which is how a user ends up with a corrupt file and a green
+        // result. Refuse and ask for the rest of the set.
+        if (group.Volumes.Count == 1 && LooksLikeSlicedVolume(group.Volumes[0].Path))
+        {
+            throw new InvalidDataException(
+                $"「{Path.GetFileName(_inputPath)}」看起来是一个分卷（文件名以多位数字结尾），但同目录下找不到它的其余分卷。" +
+                "请把整套分卷放在同一个文件夹里再解压；也可以先用 --test 校验。");
+        }
 
         _archiveDirectory = Path.GetDirectoryName(Path.GetFullPath(_inputPath)) ?? Environment.CurrentDirectory;
         IndexVolumesByName(group);
@@ -258,6 +277,22 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
     }
 
     /// <summary>
+    /// True when the file name ends in three or more digits — the naming a sliced
+    /// volume set uses (.7z.001, .zip.002, blob.003). A lone file with such a name is
+    /// one missing sibling away from a corrupt extraction.
+    /// </summary>
+    private static bool LooksLikeSlicedVolume(string path)
+    {
+        var name = Path.GetFileName(path);
+        var end = name.Length;
+        while (end > 0 && !char.IsDigit(name[end - 1])) end--;
+        var digits = 0;
+        var scan = end;
+        while (scan > 0 && char.IsDigit(name[scan - 1])) { scan--; digits++; }
+        return digits >= 3 && (scan == 0 || name[scan - 1] == '.');
+    }
+
+    /// <summary>
     /// Try the extension-hinted handler first, then every handler 7z.dll exposes.
     ///
     /// The fallback matters more than it looks: volume styles whose base name has
@@ -331,7 +366,7 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
 
         throw new InvalidDataException(
             $"无法打开「{Path.GetFileName(group.BaseName)}」：它可能已损坏、不完整，或是本程序不支持的格式。" +
-            "如果它是加密压缩包，本程序暂不支持输入口令解压。");
+            "如果这是加密压缩包，请用 --password 提供口令后重试；也可以先用 --test 做一次只读校验。");
     }
 
     /// <summary>Give the handler a name that still carries the real extension.</summary>
@@ -428,13 +463,39 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         // not touched either - that is what keeps a drag-out temp-file free.
         if (!options.TestOnly && options.OutputFactory is null) Directory.CreateDirectory(_outDir);
 
-        if (options.DeleteSpentVolumes && !_group.IsComplete)
+        // A gapped sliced set (.7z.001 + .003 + .004) merges into a stream with a hole.
+        // The decoder either fails late with a confusing code or - measured on this exact
+        // shape - writes nothing and reports success. Neither is acceptable: say which
+        // volumes are missing and stop before anything is written. The user's fix is to
+        // supply the missing volumes, so the message points there.
+        // (RAR sets are exempt: the handler fetches volumes by name and already fails
+        // loudly on a hole.)
+        if (_group.IsMultiVolume && !_group.IsComplete && !_group.IsIndependentVolumes)
         {
-            // Missing volumes mean the byte layout is a guess; never delete on a guess.
-            _errors.Add("分卷不完整，已自动禁用「解压后删除分卷」。");
+            var (have, missing) = DescribeVolumeGaps(_group);
+            RecordFailure(
+                "卷册不完整，缺少分卷",
+                $"这个压缩包按序号应是连续的分卷，现在只有第 {have} 卷，缺第 {missing} 卷。" +
+                "请补齐缺失的分卷后重试；若分卷本身已损坏，请重新获取。");
+            _errors.Add($"卷册不完整：现有第 {have} 卷，缺第 {missing} 卷。");
+            return BuildResult();
         }
 
         var selected = SelectEntries(options);
+
+        // Paths the caller explicitly asked for but the archive does not contain must be
+        // reported: an empty selection with no word of it is how "the preview showed
+        // nothing" and "the drag copied zero files" both looked like successes.
+        if (_unmatchedIncludePaths is { Count: > 0 } && selected.Count == 0)
+        {
+            var shown = string.Join(", ", _unmatchedIncludePaths.Take(3));
+            RecordFailure(
+                "压缩包里没有这些条目",
+                $"要解压的条目（{shown}{(_unmatchedIncludePaths.Count > 3 ? " 等" : "")}）在压缩包里找不到。" +
+                "可能是路径大小写或分隔符不一致，或文件在子文件夹里。请在列表里确认后重试。");
+            _errors.Add($"未找到条目：{shown}");
+            return BuildResult();
+        }
 
         if (selected.Count == 0)
         {
@@ -526,8 +587,11 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         _entriesTotal = 0;
 
         var globs = options.IncludeGlobs?.Where(g => !string.IsNullOrWhiteSpace(g)).ToArray();
-        var paths = options.IncludePaths is { Count: > 0 }
-            ? new HashSet<string>(options.IncludePaths.Select(p => p.Replace('\\', '/')), StringComparer.OrdinalIgnoreCase)
+        var requested = options.IncludePaths is { Count: > 0 }
+            ? options.IncludePaths.Select(p => p.Replace('\\', '/')).ToList()
+            : null;
+        var paths = requested is not null
+            ? new HashSet<string>(requested, StringComparer.OrdinalIgnoreCase)
             : null;
         var filtered = paths is not null || globs is { Length: > 0 };
 
@@ -541,7 +605,12 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             if (entry.IsDirectory) continue;
             _bytesTotal += entry.Size;
             _entriesTotal++;
+            if (paths is not null) paths.Remove(entry.NormalizedPath);   // matched
         }
+
+        // What the caller asked for and the archive does not have. Reported by the
+        // caller-visible failure path instead of dissolving into a silent empty run.
+        _unmatchedIncludePaths = paths is { Count: > 0 } ? paths.ToList() : null;
 
         _selection = new HashSet<uint>(selected);
         return selected;
@@ -595,13 +664,67 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
         if (_failureReason is not null) return;
         if (badPassword)
         {
-            _failureReason = SevenZipNative.OperationResult.Describe(SevenZipNative.OperationResult.WrongPassword);
-            _failureHint = SevenZipNative.OperationResult.Hint(SevenZipNative.OperationResult.WrongPassword);
+            // "Needs a password" and "the password was wrong" are different problems for
+            // the user, so they must not share one sentence. Which one it is comes from
+            // whether we actually sent a password down to the handler.
+            var supplied = !string.IsNullOrEmpty(Password);
+            _failureReason = supplied
+                ? "口令不正确"
+                : SevenZipNative.OperationResult.Describe(SevenZipNative.OperationResult.WrongPassword);
+            _failureHint = supplied
+                ? "该压缩包已加密，刚才的口令不对。请重新输入口令后重试。"
+                : "该压缩包已加密，需要一个正确的口令。请输入口令后重试。";
+            return;
+        }
+        // A file that is not an archive at all (a text file renamed .zip, a half-finished
+        // download) reaches 7z.dll as garbage and comes back as "unexpected end of data",
+        // which sends the user hunting for volumes that never existed. Sniff the header
+        // and say what it actually is.
+        if ((opRes is SevenZipNative.OperationResult.IsNotArc
+                   or SevenZipNative.OperationResult.UnexpectedEnd
+                   or SevenZipNative.OperationResult.HeadersError)
+            && ArchiveSignature.Sniff(_inputPath) == ArchiveSignature.Kind.PlainData)
+        {
+            _failureReason = "这不是压缩包，或格式不受支持";
+            _failureHint = "文件内容不像任何已知的压缩包格式（可能被改名、下载不完整，或本身就不是压缩包）。请核对来源后重新获取。";
             return;
         }
         _failureReason = SevenZipNative.OperationResult.Describe(opRes);
         _failureHint = SevenZipNative.OperationResult.Hint(opRes);
     }
+
+    /// <summary>
+    /// Which volume ordinals are present and which are missing, for the message.
+    /// Reads the trailing number of each volume file name, so it works for .7z.001,
+    /// .zip.001 and .part01.exe alike. RAR old-style first volume (name.rar) has no
+    /// number and is simply reported as present without one.
+    /// </summary>
+    private static (string Have, string Missing) DescribeVolumeGaps(VolumeGroup group)
+    {
+        var nums = new List<int>();
+        foreach (var v in group.Volumes)
+        {
+            var name = Path.GetFileName(v.Path);
+            var end = name.Length;
+            while (end > 0 && !char.IsDigit(name[end - 1])) end--;
+            var begin = end;
+            while (begin > 0 && char.IsDigit(name[begin - 1])) begin--;
+            if (begin < end && int.TryParse(name[begin..end], out var n)) nums.Add(n);
+        }
+        if (nums.Count == 0) return ("?", "?");
+        nums.Sort();
+        var have = string.Join(", ", nums);
+        var missing = Enumerable.Range(nums[0], nums[^1] - nums[0] + 1).Except(nums).ToList();
+        return (have, missing.Count > 0 ? string.Join(", ", missing) : "无");
+    }
+
+    /// <summary>
+    /// What to print next to a file name when its entry failed. Once a wrong password is
+    /// established the raw code is actively misleading - DataError reads "数据损坏", but
+    /// the bytes are fine, we simply cannot decrypt them.
+    /// </summary>
+    private string DescribeForUser(int opRes) =>
+        _wrongPassword ? "口令不正确" : SevenZipNative.OperationResult.Describe(opRes);
 
     /// <summary>Same as <see cref="RecordFailure(int)"/> for failures that never
     /// reached a 7-Zip operation result (I/O, permissions, path safety).</summary>
@@ -1043,7 +1166,7 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             {
                 _failed++;
                 RecordFailure(opRes);
-                _errors.Add($"{_lastEntry ?? "未知条目"}: {SevenZipNative.OperationResult.Describe(opRes)}");
+                _errors.Add($"{_lastEntry ?? "未知条目"}: {DescribeForUser(opRes)}");
             }
         }
         else if (mode == SevenZipNative.AskMode.Test)
@@ -1054,7 +1177,7 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
             {
                 _failed++;
                 RecordFailure(opRes);
-                _errors.Add($"{_lastEntry ?? "未知条目"}: {SevenZipNative.OperationResult.Describe(opRes)}");
+                _errors.Add($"{_lastEntry ?? "未知条目"}: {DescribeForUser(opRes)}");
             }
 
             if (testEntry is { IsDirectory: false })
