@@ -75,6 +75,18 @@ public partial class WelcomeWindow : Window
         Close();
     }
 
+    /// <summary>
+    /// Mark the guide as shown no matter how the window went away - the X button, Alt+F4
+    /// or the taskbar. Only the two explicit buttons used to persist it, so anyone who
+    /// closed the guide directly got it again on every launch, which is exactly the
+    /// nagging a first-run guide must not do.
+    /// </summary>
+    protected override void OnClosed(EventArgs e)
+    {
+        base.OnClosed(e);
+        SaveShown();
+    }
+
     private void OnBindClick(object sender, RoutedEventArgs e)
     {
         var selectedTypes = _rows.Where(r => r.IsChecked).Select(r => r.Type).ToList();

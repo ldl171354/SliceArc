@@ -63,6 +63,16 @@
                             <TextBlock Text="打开" VerticalAlignment="Center" />
                         </StackPanel>
                     </Button>
+                    <!-- 上一层 / 刷新贴着打开键：这是浏览压缩包时最常用的两个动作 -->
+                    <Button x:Name="UpButton" Style="{StaticResource IconButton}" Click="OnUpClick"
+                            ToolTip="上一级（Backspace）">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE74A;" />
+                    </Button>
+                    <Button x:Name="RefreshButton" Style="{StaticResource IconButton}" Click="OnRefreshClick"
+                            ToolTip="刷新（F5）">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE72C;" />
+                    </Button>
+                    <Rectangle Width="1" Height="18" Fill="{DynamicResource B.Border}" Margin="6,0" />
                     <Button x:Name="CompressButton" Style="{StaticResource ToolButton}" Click="OnCompressClick"
                             ToolTip="把选中的文件 / 文件夹压缩成压缩包">
                         <StackPanel Orientation="Horizontal">
@@ -100,14 +110,6 @@
                         </StackPanel>
                     </Button>
                     <Rectangle Width="1" Height="18" Fill="{DynamicResource B.Border}" Margin="6,0" />
-                    <Button x:Name="UpButton" Style="{StaticResource IconButton}" Click="OnUpClick"
-                            ToolTip="上一级（Backspace）">
-                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE74A;" />
-                    </Button>
-                    <Button x:Name="RefreshButton" Style="{StaticResource IconButton}" Click="OnRefreshClick"
-                            ToolTip="刷新（F5）">
-                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE72C;" />
-                    </Button>
                     <Rectangle Width="1" Height="18" Fill="{DynamicResource B.Border}" Margin="6,0" />
                     <Button x:Name="ToolsButton" Style="{StaticResource ToolButton}" Click="OnToolsClick"
                             ToolTip="工具箱：压缩包校验、批量重命名">
@@ -240,16 +242,54 @@
                 <RowDefinition Height="*" />
             </Grid.RowDefinitions>
 
-            <!-- view switch: list (DataGrid) / thumbnails -->
+            <!-- view switch: list (DataGrid) / thumbnails, compact icon buttons.
+                 The style is inline: IconButton targets Button and crashes a ToggleButton
+                 at XamlParse time (measured - this shipped once as a startup crash). -->
             <Border Grid.Row="0" Background="{DynamicResource B.SurfaceAlt}"
-                    BorderBrush="{DynamicResource B.Border}" BorderThickness="0,0,0,1" Padding="8,4">
+                    BorderBrush="{DynamicResource B.Border}" BorderThickness="0,0,0,1" Padding="8,3">
+                <Border.Resources>
+                    <Style x:Key="ViewToggle" TargetType="ToggleButton">
+                        <Setter Property="Background" Value="Transparent" />
+                        <Setter Property="Foreground" Value="{DynamicResource B.TextDim}" />
+                        <Setter Property="BorderBrush" Value="Transparent" />
+                        <Setter Property="BorderThickness" Value="1" />
+                        <Setter Property="Width" Value="30" />
+                        <Setter Property="Height" Value="24" />
+                        <Setter Property="Cursor" Value="Hand" />
+                        <Setter Property="Template">
+                            <Setter.Value>
+                                <ControlTemplate TargetType="ToggleButton">
+                                    <Border x:Name="bd" Background="{TemplateBinding Background}"
+                                            BorderBrush="{TemplateBinding BorderBrush}"
+                                            BorderThickness="{TemplateBinding BorderThickness}"
+                                            CornerRadius="6">
+                                        <ContentPresenter HorizontalAlignment="Center" VerticalAlignment="Center" />
+                                    </Border>
+                                    <ControlTemplate.Triggers>
+                                        <Trigger Property="IsMouseOver" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource B.Hover}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource B.Text}" />
+                                        </Trigger>
+                                        <Trigger Property="IsChecked" Value="True">
+                                            <Setter TargetName="bd" Property="Background" Value="{DynamicResource B.AccentSoft}" />
+                                            <Setter Property="Foreground" Value="{DynamicResource B.AccentDeep}" />
+                                            <Setter TargetName="bd" Property="BorderBrush" Value="{DynamicResource B.Accent}" />
+                                        </Trigger>
+                                    </ControlTemplate.Triggers>
+                                </ControlTemplate>
+                            </Setter.Value>
+                        </Setter>
+                    </Style>
+                </Border.Resources>
                 <StackPanel Orientation="Horizontal" HorizontalAlignment="Right">
-                    <TextBlock Text="视图" VerticalAlignment="Center" Margin="0,0,8,0"
-                               Style="{StaticResource Caption}" />
-                    <ToggleButton x:Name="ListModeButton" Height="24" Padding="10,2" Margin="0,0,4,0"
-                                  Content="列表" Click="OnViewModeClick" Tag="list" />
-                    <ToggleButton x:Name="ThumbModeButton" Height="24" Padding="10,2"
-                                  Content="缩略图" Click="OnViewModeClick" Tag="thumbs" />
+                    <ToggleButton x:Name="ListModeButton" Click="OnViewModeClick" Tag="list"
+                                  ToolTip="列表视图" Style="{StaticResource ViewToggle}">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE8FD;" />
+                    </ToggleButton>
+                    <ToggleButton x:Name="ThumbModeButton" Margin="4,0,0,0" Click="OnViewModeClick" Tag="thumbs"
+                                  ToolTip="缩略图视图" Style="{StaticResource ViewToggle}">
+                        <TextBlock Style="{StaticResource Glyph}" Text="&#xE71A;" />
+                    </ToggleButton>
                 </StackPanel>
             </Border>
 

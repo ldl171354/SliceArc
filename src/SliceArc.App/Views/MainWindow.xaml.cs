@@ -261,6 +261,8 @@ public partial class MainWindow : Window
 
     /// <summary>Rows picked in thumbnail view; feeds 解压选中项 the same as the grid's selection.</summary>
     private readonly HashSet<BrowserRow> _thumbSelection = new();
+    private Point _thumbDragStart;
+    private bool _thumbDragging;
 
     private void OnViewModeClick(object sender, RoutedEventArgs e)
     {
@@ -379,6 +381,28 @@ public partial class MainWindow : Window
                 border.BorderBrush = (Brush)FindResource("B.Accent");
                 border.BorderThickness = new Thickness(2);
             }
+        };
+
+        // Drag-out from a thumbnail card: same pipeline as the grid (archive entries
+        // stream straight to the drop target; folder rows drag real files).
+        border.PreviewMouseLeftButtonDown += (s, e) => _thumbDragStart = e.GetPosition(border);
+        border.PreviewMouseMove += (s, e) =>
+        {
+            if (_busy || _dragging || _thumbDragging) return;
+            if (e.LeftButton != MouseButtonState.Pressed) return;
+            var p = e.GetPosition(border);
+            if (Math.Abs(p.X - _thumbDragStart.X) < SystemParameters.MinimumHorizontalDragDistance &&
+                Math.Abs(p.Y - _thumbDragStart.Y) < SystemParameters.MinimumVerticalDragDistance)
+            {
+                return;
+            }
+            var chosen = _thumbSelection.Contains(row)
+                ? _thumbSelection.ToList()
+                : new List<BrowserRow> { row };
+            _thumbDragging = true;
+            try { DragRowsOut(chosen); }
+            catch (Exception ex) { Report("拖拽失败", ex); }
+            finally { _thumbDragging = false; }
         };
 
         // Folder rows and archive-mode image rows differ: only archive images decode.
