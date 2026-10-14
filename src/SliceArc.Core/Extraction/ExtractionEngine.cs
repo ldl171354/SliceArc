@@ -125,9 +125,15 @@ public sealed class ExtractionEngine : IArchiveExtractCallback, ICryptoGetTextPa
 
     /// <summary>
     /// Decompression thread count handed to the handler as the "mt" property before
-    /// Open. 0 = the handler's default. Only formats that can actually parallelise
-    /// decoding (LZMA2 chunks, zip, xz blocks, bzip2) benefit; single-stream LZMA
-    /// decodes on one thread by design.
+    /// Open. 0 = the handler's default.
+    /// <para>
+    /// Measured (152 MB × solid single-stream 7z / 50-block non-solid 7z / multi-file
+    /// zip; threads 1,2,4,8,16,32,64; best of three each): a no-op on the decode side —
+    /// every setting lands within ±3% of one thread, and the 50-block archive uses
+    /// ~1.3 of 8 cores regardless. 7z.dll schedules decode workers per block internally
+    /// and does not read "mt" from IInArchive; the knob only works on the compression
+    /// side. Kept for symmetry with the CLI's --threads.
+    /// </para>
     /// </summary>
     public int Threads { get; set; }
 
