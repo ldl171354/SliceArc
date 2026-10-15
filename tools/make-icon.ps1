@@ -1,9 +1,20 @@
-# Regenerates the SliceArc app icon: an archive box with a zipper and a
-# lightning bolt, drawn programmatically (no external assets).
+# Regenerates the SliceArc app icon from the 3D artwork in tools\icon-source.png.
+#
+# The artwork is a rendered stack of archive blocks with a lightning bolt,
+# already cut out of its background and centre-framed in a square (that cut-out
+# is done once, offline - see the note in the file header below). This script
+# only puts it on the brand tile and writes the size ladder, so re-running it
+# never touches the artwork's pixels beyond scaling.
+#
+# The tile stays light (near-white with a cool blue tint) rather than brand
+# blue: the artwork itself is blue, so a blue tile would swallow its silhouette.
+# A hairline border keeps the tile defined when it sits on a white page.
 #
 # Outputs:
 #   src\SliceArc.App\Assets\SliceArc.ico   - multi-size ICO (PNG-compressed entries)
 #   src\SliceArc.ShellExt\Assets\Logo.png  - 256x256 master for the sparse package
+#   docs\appicon.png                       - 256x256 for the landing page
+#   docs\favicon.png                       - 64x64 favicon
 #
 # Usage:  powershell -ExecutionPolicy Bypass -File tools\make-icon.ps1
 
@@ -11,6 +22,22 @@ $ErrorActionPreference = "Stop"
 Add-Type -AssemblyName System.Drawing
 
 $root = Split-Path -Parent $PSScriptRoot
+$sourcePath = Join-Path $PSScriptRoot "icon-source.png"
+if (-not (Test-Path $sourcePath)) { throw "artwork not found: $sourcePath" }
+
+# ---- brand tile palette -----------------------------------------------------
+$TileTop    = [System.Drawing.Color]::FromArgb(255, 251, 253, 255)
+$TileBottom = [System.Drawing.Color]::FromArgb(255, 228, 237, 251)
+$TileEdge   = [System.Drawing.Color]::FromArgb(40, 20, 46, 166)
+$Sheen      = [System.Drawing.Color]::FromArgb(150, 255, 255, 255)
+$SheenOff   = [System.Drawing.Color]::FromArgb(0, 255, 255, 255)
+
+# How much of the tile the artwork square covers. The artwork carries a small
+# transparent margin of its own, so these land the visible subject at ~86% (big
+# sizes, where the tile border and sheen need room) and ~95% (16-32 px, where
+# every pixel of subject counts and the tile detail is dropped anyway).
+$FillNormal = 0.96
+$FillSmall  = 1.04
 
 function New-RoundRectPath([float]$x, [float]$y, [float]$w, [float]$h, [float]$r) {
     $p = New-Object System.Drawing.Drawing2D.GraphicsPath
@@ -23,102 +50,65 @@ function New-RoundRectPath([float]$x, [float]$y, [float]$w, [float]$h, [float]$r
     return $p
 }
 
-function New-LinearBrush([float]$x, [float]$y, [float]$w, [float]$h, $c1, $c2) {
+function New-DiagonalBrush([float]$x, [float]$y, [float]$w, [float]$h, $c1, $c2) {
+    $rect = [System.Drawing.RectangleF]::new($x, $y, $w, $h)
+    return [System.Drawing.Drawing2D.LinearGradientBrush]::new(
+        $rect, $c1, $c2, [System.Drawing.Drawing2D.LinearGradientMode]::ForwardDiagonal)
+}
+
+function New-VerticalBrush([float]$x, [float]$y, [float]$w, [float]$h, $c1, $c2) {
     $rect = [System.Drawing.RectangleF]::new($x, $y, $w, $h)
     return [System.Drawing.Drawing2D.LinearGradientBrush]::new(
         $rect, $c1, $c2, [System.Drawing.Drawing2D.LinearGradientMode]::Vertical)
 }
 
-function Draw-Master {
-    $bmp = [System.Drawing.Bitmap]::new(256, 256)
+# Draws one complete icon at exactly $Size, straight from the 512 px artwork, so
+# no size in the ladder is produced by resampling another icon.
+function Draw-Icon([int]$Size, $Artwork) {
+    $detailed = $Size -gt 32
+    $bmp = [System.Drawing.Bitmap]::new($Size, $Size, [System.Drawing.Imaging.PixelFormat]::Format32bppArgb)
     $g = [System.Drawing.Graphics]::FromImage($bmp)
     $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
     $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
     $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
+    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
 
-    # ---- soft drop shadow ----
-    $shadowBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(70, 15, 23, 42))
-    $shadowPath = New-RoundRectPath 34 70 188 160 24
-    $g.FillPath($shadowBrush, $shadowPath)
-    $shadowPath.Dispose(); $shadowBrush.Dispose()
+    # geometry is expressed against the 256 px original, then scaled
+    $k = $Size / 256.0
+    $tx = 12 * $k; $ty = 12 * $k; $tw = 232 * $k; $tr = 52 * $k
 
-    # ---- box body: blue gradient ----
-    $bodyPath = New-RoundRectPath 30 62 188 158 24
-    $bodyBrush = New-LinearBrush 30 62 188 158 `
-        ([System.Drawing.Color]::FromArgb(96, 165, 250)) `
-        ([System.Drawing.Color]::FromArgb(29, 78, 216))
-    $g.FillPath($bodyBrush, $bodyPath)
-    $bodyBrush.Dispose()
+    # ---- tile ----
+    $tilePath = New-RoundRectPath $tx $ty $tw $tw $tr
+    $tileBrush = New-DiagonalBrush $tx $ty $tw $tw $TileTop $TileBottom
+    $g.FillPath($tileBrush, $tilePath)
+    $tileBrush.Dispose()
 
-    # ---- lid: lighter top band, clipped to the body ----
-    $g.SetClip($bodyPath)
-    $lidBrush = New-LinearBrush 30 62 188 46 `
-        ([System.Drawing.Color]::FromArgb(147, 197, 253)) `
-        ([System.Drawing.Color]::FromArgb(59, 130, 246))
-    $g.FillRectangle($lidBrush, [System.Drawing.RectangleF]::new(30, 62, 188, 46))
-    $lidBrush.Dispose()
-    $g.ResetClip()
-
-    # ---- body outline ----
-    $outlinePen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(30, 58, 138), 3)
-    $g.DrawPath($outlinePen, $bodyPath)
-    $outlinePen.Dispose()
-
-    # ---- zipper teeth along the lid seam (y ~ 102) ----
-    $teethBrush = [System.Drawing.SolidBrush]::new([System.Drawing.Color]::FromArgb(219, 234, 254))
-    for ($x = 48; $x -le 200; $x += 16) {
-        $tp = New-RoundRectPath $x 97 10 10 3
-        $g.FillPath($teethBrush, $tp)
-        $tp.Dispose()
+    if ($detailed) {
+        # Top-left sheen: turns the flat fill into a lit surface.
+        $g.SetClip($tilePath)
+        $sheenBrush = New-VerticalBrush $tx $ty $tw (150 * $k) $Sheen $SheenOff
+        $g.FillRectangle($sheenBrush, [System.Drawing.RectangleF]::new($tx, $ty, $tw, 150 * $k))
+        $sheenBrush.Dispose()
+        $g.ResetClip()
     }
-    $teethBrush.Dispose()
 
-    # ---- zipper slider in the middle ----
-    $sliderPath = New-RoundRectPath 110 91 28 22 6
-    $sliderBrush = New-LinearBrush 110 91 28 22 `
-        ([System.Drawing.Color]::FromArgb(248, 250, 252)) `
-        ([System.Drawing.Color]::FromArgb(148, 163, 184))
-    $g.FillPath($sliderBrush, $sliderPath)
-    $sliderBrush.Dispose()
-    $sliderPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(71, 85, 105), 2)
-    $g.DrawPath($sliderPen, $sliderPath)
-    $sliderPen.Dispose(); $sliderPath.Dispose()
+    # ---- artwork ----
+    $fill = if ($detailed) { $FillNormal } else { $FillSmall }
+    $aw = $tw * $fill
+    $ax = $tx + ($tw - $aw) / 2
+    $ay = $ty + ($tw - $aw) / 2 + (2 * $k)
+    $g.DrawImage($Artwork, [System.Drawing.RectangleF]::new($ax, $ay, $aw, $aw))
 
-    # ---- lightning bolt ----
-    $pts = [System.Drawing.PointF[]]@(
-        [System.Drawing.PointF]::new(150, 106),
-        [System.Drawing.PointF]::new(100, 178),
-        [System.Drawing.PointF]::new(127, 178),
-        [System.Drawing.PointF]::new(108, 226),
-        [System.Drawing.PointF]::new(174, 146),
-        [System.Drawing.PointF]::new(143, 146),
-        [System.Drawing.PointF]::new(173, 106)
-    )
-    $boltBrush = New-LinearBrush 100 106 74 120 `
-        ([System.Drawing.Color]::FromArgb(254, 224, 71)) `
-        ([System.Drawing.Color]::FromArgb(245, 158, 11))
-    $g.FillPolygon($boltBrush, $pts)
-    $boltBrush.Dispose()
-    $boltPen = [System.Drawing.Pen]::new([System.Drawing.Color]::FromArgb(146, 64, 14), 4)
-    $boltPen.LineJoin = [System.Drawing.Drawing2D.LineJoin]::Round
-    $g.DrawPolygon($boltPen, $pts)
-    $boltPen.Dispose()
+    if ($detailed) {
+        # Hairline border: keeps the tile readable when it sits on white.
+        $pen = [System.Drawing.Pen]::new($TileEdge, [float]([Math]::Max(1, 1.4 * $k)))
+        $g.DrawPath($pen, $tilePath)
+        $pen.Dispose()
+    }
 
-    $bodyPath.Dispose()
+    $tilePath.Dispose()
     $g.Dispose()
     return $bmp
-}
-
-function Resize-Bitmap($src, [int]$size) {
-    $dst = [System.Drawing.Bitmap]::new($size, $size)
-    $g = [System.Drawing.Graphics]::FromImage($dst)
-    $g.InterpolationMode = [System.Drawing.Drawing2D.InterpolationMode]::HighQualityBicubic
-    $g.SmoothingMode = [System.Drawing.Drawing2D.SmoothingMode]::AntiAlias
-    $g.PixelOffsetMode = [System.Drawing.Drawing2D.PixelOffsetMode]::HighQuality
-    $g.CompositingQuality = [System.Drawing.Drawing2D.CompositingQuality]::HighQuality
-    $g.DrawImage($src, 0, 0, $size, $size)
-    $g.Dispose()
-    return $dst
 }
 
 function Get-PngBytes($bmp) {
@@ -131,23 +121,37 @@ function Get-PngBytes($bmp) {
 
 # ---------------------------------------------------------------------------
 
-Write-Host "Drawing master 256x256..." -ForegroundColor Cyan
-$master = Draw-Master
+Write-Host "Loading artwork $sourcePath" -ForegroundColor Cyan
+$artwork = [System.Drawing.Image]::FromFile($sourcePath)
 
-# Logo.png for the sparse package
+# 256 px master: sparse-package logo + landing-page icon
+$master = Draw-Icon 256 $artwork
 $logoPath = Join-Path $root "src\SliceArc.ShellExt\Assets\Logo.png"
 $master.Save($logoPath, [System.Drawing.Imaging.ImageFormat]::Png)
-Write-Host "Logo.png  -> $logoPath" -ForegroundColor Green
+Write-Host "Logo.png    -> $logoPath (256 px)" -ForegroundColor Green
 
-# Multi-size ICO (PNG-compressed entries; Windows Vista+)
+$docsDir = Join-Path $root "docs"
+$appiconPath = Join-Path $docsDir "appicon.png"
+$master.Save($appiconPath, [System.Drawing.Imaging.ImageFormat]::Png)
+Write-Host "appicon.png -> $appiconPath (256 px)" -ForegroundColor Green
+
+$favicon = Draw-Icon 64 $artwork
+$faviconPath = Join-Path $docsDir "favicon.png"
+$favicon.Save($faviconPath, [System.Drawing.Imaging.ImageFormat]::Png)
+$favicon.Dispose()
+Write-Host "favicon.png -> $faviconPath (64 px)" -ForegroundColor Green
+
+# Multi-size ICO (PNG-compressed entries; Windows Vista+). Each size is drawn
+# from the artwork directly rather than downscaled from the 256 px master.
 $sizes = 16, 24, 32, 48, 64, 128, 256
 $pngs = @()
 foreach ($s in $sizes) {
-    if ($s -eq 256) { $b = $master } else { $b = Resize-Bitmap $master $s }
+    if ($s -eq 256) { $b = $master }
+    else { $b = Draw-Icon $s $artwork }
     $pngs += , (Get-PngBytes $b)
-    if ($s -ne 256) { $b.Dispose() }
+    $b.Dispose()
 }
-$master.Dispose()
+$artwork.Dispose()
 
 $icoPath = Join-Path $root "src\SliceArc.App\Assets\SliceArc.ico"
 $fs = [System.IO.File]::Create($icoPath)
@@ -175,5 +179,5 @@ for ($i = 0; $i -lt $sizes.Count; $i++) {
 foreach ($p in $pngs) { $bw.Write($p) }
 $bw.Close()
 
-Write-Host "SliceArc.ico -> $icoPath ($sizes px)" -ForegroundColor Green
+Write-Host "SliceArc.ico -> $icoPath ($($sizes -join ', ') px)" -ForegroundColor Green
 Write-Host "Done. Rebuild the app to embed the new icon." -ForegroundColor Green

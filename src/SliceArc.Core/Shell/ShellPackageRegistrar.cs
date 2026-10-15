@@ -19,7 +19,11 @@ namespace SliceArc.Core.Shell;
 /// trust requires one UAC elevation (packages with runFullTrust are not
 /// accepted from CurrentUser trust); everything else runs non-elevated.
 ///
-/// Every failure is a graceful skip: the classic registry menu keeps working.
+/// Registration failures are a graceful skip - the classic registry menu keeps
+/// working. Removal is the mirror image and must NOT be silent: the machine
+/// certificate is the one piece of state that only an elevated run can delete,
+/// so <see cref="Remove"/> asks for that elevation once and reports whatever is
+/// still left behind.
 /// </summary>
 public static class ShellPackageRegistrar
 {
@@ -43,6 +47,19 @@ public static class ShellPackageRegistrar
     {
         public bool Ok { get; init; }
         public string Reason { get; init; } = string.Empty;
+    }
+
+    /// <summary>What a removal left behind.</summary>
+    public sealed class RemovalResult
+    {
+        /// <summary>True when neither the package nor the machine certificate remain.</summary>
+        public bool Ok { get; init; }
+
+        /// <summary>True when state only an elevated run can clear is still present.</summary>
+        public bool NeedsElevation { get; init; }
+
+        /// <summary>Human-readable summary, including anything still left behind.</summary>
+        public string Detail { get; init; } = string.Empty;
     }
 
     // =====================================================================
@@ -116,7 +133,7 @@ public static class ShellPackageRegistrar
 
             // Re-registering from a new location only works reliably after the
             // old registration is gone.
-            Unregister(null);
+            RemovePackage(null);
 
             log?.Invoke("注册现代右键菜单包…");
             var (exit, output) = RunPowerShell(
@@ -142,26 +159,162 @@ public static class ShellPackageRegistrar
         }
     }
 
-    /// <summary>Best-effort removal of the sparse package. True when it is gone.</summary>
-    public static bool Unregister(Action<string>? log = null)
+    /// <summary>
+    /// Remove the sparse package and the signing certificate's machine-level
+    /// trust.
+    ///
+    /// Everything the current user can do happens first: the package is removed
+    /// (it is registered per user) and the per-user certificate copy is dropped.
+    /// Only if machine-level state survives - the LocalMachine certificate, or a
+    /// package registration that refused to go - and <paramref name="allowElevation"/>
+    /// is set, one elevated pass clears it; the user declining that prompt is
+    /// reported, never swallowed.
+    ///
+    /// The result always names what is still left, so a caller can never claim a
+    /// clean uninstall while residue remains.
+    /// </summary>
+    public static RemovalResult Remove(bool allowElevation, Action<string>? log = null)
+    {
+        RemovePackage(log);
+        RemoveUserCertificate(log);
+
+        var (packageLeft, machineCerts, userCerts) = Residue();
+        if (!packageLeft && machineCerts == 0 && userCerts == 0)
+            return new RemovalResult { Ok = true, Detail = "现代菜单包与受信任证书已清理" };
+
+        if (!allowElevation)
+            return new RemovalResult { NeedsElevation = true, Detail = DescribeLeftovers(packageLeft, machineCerts, userCerts) };
+
+        log?.Invoke("需要一次提权：清理系统级注册（现代菜单包 / 本机受信任证书）…");
+        var canceled = false;
+        try
+        {
+            var psi = new ProcessStartInfo
+            {
+                FileName = "powershell.exe",
+                Arguments = "-NoProfile -WindowStyle Hidden -EncodedCommand " + EncodedCommand(CleanupScript()),
+                Verb = "runas",
+                UseShellExecute = true,
+            };
+            using var proc = Process.Start(psi);
+            if (proc is null) return new RemovalResult { NeedsElevation = true, Detail = "无法启动提权进程" };
+            proc.WaitForExit(180_000);
+        }
+        catch (System.ComponentModel.Win32Exception ex) when (ex.NativeErrorCode == 1223)
+        {
+            canceled = true;
+        }
+
+        (packageLeft, machineCerts, userCerts) = Residue();
+        if (!packageLeft && machineCerts == 0 && userCerts == 0)
+            return new RemovalResult { Ok = true, Detail = "现代菜单包与受信任证书已清理（提权）" };
+
+        return new RemovalResult
+        {
+            NeedsElevation = true,
+            Detail = (canceled ? "已跳过系统级清理（用户取消了管理员授权）。" : string.Empty)
+                     + DescribeLeftovers(packageLeft, machineCerts, userCerts),
+        };
+    }
+
+    /// <summary>Everything a removal could leave behind, as of right now.</summary>
+    private static (bool PackageLeft, int MachineCerts, int UserCerts) Residue() =>
+        (InstalledVersion() is not null, MachineCertificateThumbprints().Count, UserCertificateCount());
+
+    /// <summary>Unelevated package removal; failures are logged, not swallowed silently.</summary>
+    private static void RemovePackage(Action<string>? log)
+    {
+        var (exit, output) = RunPowerShell(
+            $"Get-AppxPackage -Name {PackageName} -ErrorAction SilentlyContinue | Remove-AppxPackage -ErrorAction Stop");
+        if (exit != 0) log?.Invoke("移除现代菜单包失败（可能需要管理员）: " + Tail(output));
+
+        // Removal finalizes asynchronously; poll until the package is gone.
+        for (var i = 0; i < 10; i++)
+        {
+            if (InstalledVersion() is null) return;
+            Thread.Sleep(500);
+        }
+        log?.Invoke("移除现代菜单包超时，包可能仍在系统中");
+    }
+
+    /// <summary>
+    /// Drop the per-user copy of the signing certificate. No elevation is asked
+    /// for: this normally succeeds unelevated, and anything that refuses to go is
+    /// picked up by the elevated pass or reported as residue.
+    ///
+    /// The store can hand back the same certificate twice; deleting the second
+    /// copy then fails even though the first delete already removed it, so a
+    /// failure is only worth logging when the certificate really survives.
+    /// </summary>
+    private static void RemoveUserCertificate(Action<string>? log)
     {
         try
         {
-            RunPowerShell($"Get-AppxPackage -Name {PackageName} | Remove-AppxPackage -ErrorAction SilentlyContinue");
-            // Removal finalizes asynchronously; poll until the package is gone.
-            for (var i = 0; i < 10; i++)
+            using (var store = new X509Store(StoreName.TrustedPeople, StoreLocation.CurrentUser, OpenFlags.ReadWrite))
             {
-                if (InstalledVersion() is null) return true;
-                Thread.Sleep(500);
+                foreach (var cert in store.Certificates.Cast<X509Certificate2>()
+                             .Where(c => c.Subject == CertSubject).ToList())
+                {
+                    try { store.Remove(cert); }
+                    catch { /* already gone, or needs the elevated pass below */ }
+                }
             }
-            log?.Invoke("移除现代菜单包超时");
-            return false;
+
+            var left = UserCertificateCount();
+            if (left > 0) log?.Invoke($"用户级受信任列表仍有 {left} 个证书（CN=SliceArc），将交给提权清理");
         }
         catch (Exception ex)
         {
-            log?.Invoke("移除现代菜单包异常: " + ex.Message);
-            return false;
+            log?.Invoke("移除用户级证书失败: " + ex.Message);
         }
+    }
+
+    /// <summary>How many of our certificates sit in the per-user trusted list.</summary>
+    private static int UserCertificateCount()
+    {
+        try
+        {
+            using var store = new X509Store(StoreName.TrustedPeople, StoreLocation.CurrentUser, OpenFlags.ReadOnly);
+            return store.Certificates.Cast<X509Certificate2>().Count(c => c.Subject == CertSubject);
+        }
+        catch { return 0; }
+    }
+
+    /// <summary>
+    /// Thumbprints of our certificate in the machine-wide trusted list. Read-only
+    /// enumeration of LocalMachine stores works without elevation; a failed read
+    /// is treated as "none". Matched by subject - "CN=SliceArc" is this product's
+    /// own self-signed subject, so nothing else on the machine can be hit.
+    /// </summary>
+    private static List<string> MachineCertificateThumbprints()
+    {
+        var result = new List<string>();
+        try
+        {
+            using var store = new X509Store(StoreName.TrustedPeople, StoreLocation.LocalMachine, OpenFlags.ReadOnly);
+            result.AddRange(store.Certificates.Cast<X509Certificate2>()
+                .Where(c => c.Subject == CertSubject)
+                .Select(c => c.Thumbprint));
+        }
+        catch { /* treated as none found */ }
+        return result;
+    }
+
+    /// <summary>The elevated half of <see cref="Remove"/>: package plus both certificate copies.</summary>
+    private static string CleanupScript() =>
+        $"$p = Get-AppxPackage -Name {PackageName} -ErrorAction SilentlyContinue; " +
+        "if ($p) { $p | Remove-AppxPackage -ErrorAction SilentlyContinue } ; " +
+        "foreach ($loc in 'LocalMachine','CurrentUser') { " +
+        $"  Get-ChildItem (\"Cert:\\$loc\\TrustedPeople\") -ErrorAction SilentlyContinue | " +
+        $"  Where-Object {{ $_.Subject -eq '{CertSubject}' }} | Remove-Item -Force -ErrorAction SilentlyContinue }}";
+
+    private static string DescribeLeftovers(bool packageLeft, int machineCertCount, int userCertCount)
+    {
+        var parts = new List<string>();
+        if (packageLeft) parts.Add("现代右键菜单包（SliceArc.ContextMenu）仍在系统中");
+        if (machineCertCount > 0) parts.Add($"本机受信任证书仍有 {machineCertCount} 个（CN=SliceArc）");
+        if (userCertCount > 0) parts.Add($"用户受信任列表仍有 {userCertCount} 个证书（CN=SliceArc）");
+        return parts.Count == 0 ? "没有残留" : string.Join("；", parts);
     }
 
     /// <summary>Version string of the installed sparse package, or null when absent.</summary>

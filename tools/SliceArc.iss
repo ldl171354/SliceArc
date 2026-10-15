@@ -1,10 +1,10 @@
-﻿; SliceArc Inno Setup script
+; SliceArc Inno Setup script
 ; Produces a single installer EXE that installs SliceArc to %LOCALAPPDATA%\Programs\SliceArc,
 ; registers right-click context menu (HKCU), and provides an uninstaller.
 ; No admin rights required.
 
-#define MyAppVersion "0.4.2"
-#define MyAppName "超速解压缩"
+#define MyAppVersion "0.4.5"
+#define MyAppName "极限压缩"
 #define MyAppExeName "SliceArc.App.exe"
 #define MyAppPublisher "LD"
 

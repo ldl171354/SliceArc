@@ -10,7 +10,7 @@ public sealed record ShellMenuOptions
     public required string ExecutablePath { get; init; }
 
     /// <summary>Top-level menu caption.</summary>
-    public string MenuText { get; init; } = "极限解压";
+    public string MenuText { get; init; } = "极限压缩";
 
     /// <summary>Icon reference; defaults to the executable's own icon.</summary>
     public string? IconReference { get; init; }
@@ -34,9 +34,12 @@ public sealed record ShellMenuOptions
 /// Everything lives under HKEY_CURRENT_USER, so no elevation is ever required
 /// and <see cref="Unregister"/> is a complete rollback.
 ///
-/// The verbs are FLAT - one top-level entry per action, each with its own
-/// <c>command</c>. That is deliberate, and it is the outcome of an actual
-/// failure:
+/// These are the FALLBACK verbs, and they are FLAT - one top-level entry per
+/// action, each with its own <c>command</c>. Prefer <see cref="Install"/>, which
+/// only writes them when the Windows 11 modern menu (a real cascade, see
+/// <see cref="ShellPackageRegistrar"/>) cannot be registered. The flat form
+/// exists because every HKCU-only cascade shape was tried on this machine and
+/// every one of them produced a dead item:
 ///
 ///   1. A cascade built with <c>SubCommands = ""</c> plus a nested
 ///      <c>shell</c> subkey produced a dead item: the submenu opened empty and
@@ -54,7 +57,7 @@ public sealed record ShellMenuOptions
 ///      shape to copy from it.
 ///
 /// Flat verbs have no second level that can fail to resolve, and they are
-/// one click faster. The captions share a "SliceArc：" prefix so they still
+/// one click faster. The captions share an "极限压缩：" prefix so they still
 /// read as one group in the menu.
 /// </summary>
 public static class ShellMenuRegistrar
@@ -91,6 +94,57 @@ public static class ShellMenuRegistrar
     public static string? RegisteredTarget() => RegisteredTarget(ClassesRoot);
 
     // =====================================================================
+    // Install / remove facade (the only entry points App and the UI use)
+    // =====================================================================
+
+    /// <summary>Which form of the menu an install ended up using.</summary>
+    public sealed record InstallResult(bool ModernMenu, string Detail);
+
+    /// <summary>
+    /// Install the Explorer menu, preferring the Windows 11 modern (cascading)
+    /// menu and falling back to the flat classic verbs.
+    ///
+    /// The two forms must never be live at the same time: the modern menu is
+    /// already a submenu, so leaving the classic verbs behind puts every action
+    /// in "显示更多选项" twice - exactly the clutter the flat set was there to
+    /// avoid. So the flat verbs are written *only* when the modern menu cannot
+    /// be registered (Windows 10, missing .NET 8, missing ShellExt files), where
+    /// they are the sole entry point.
+    /// </summary>
+    public static InstallResult Install(ShellMenuOptions options, string appDir, Action<string>? log = null)
+    {
+        var modern = ShellPackageRegistrar.Register(appDir, log);
+        if (modern.Ok)
+        {
+            // Drop whatever flat verbs an older version left in the registry,
+            // otherwise an upgrade keeps showing both menus.
+            Unregister();
+            log?.Invoke("现代右键菜单已启用，已移除经典平铺菜单项");
+            return new InstallResult(true, modern.Reason);
+        }
+
+        Register(options);
+        log?.Invoke($"现代右键菜单不可用（{modern.Reason}），已回退经典平铺菜单");
+        return new InstallResult(false, modern.Reason);
+    }
+
+    /// <summary>True when either menu form is installed; the UI checkbox reads this.</summary>
+    public static bool IsMenuInstalled() =>
+        IsRegistered() || ShellPackageRegistrar.InstalledVersion() is not null;
+
+    /// <summary>
+    /// Complete rollback: the classic verbs (no elevation) plus the machine-level
+    /// state the modern menu left behind - the sparse package and the
+    /// machine-trusted signing certificate, which cost one elevation.
+    /// </summary>
+    public static ShellPackageRegistrar.RemovalResult RemoveAll(
+        bool allowElevation, Action<string>? log = null)
+    {
+        Unregister();
+        return ShellPackageRegistrar.Remove(allowElevation, log);
+    }
+
+    // =====================================================================
     // Test-friendly overloads (the probe points these at a scratch hive path)
     // =====================================================================
 
@@ -124,21 +178,21 @@ public static class ShellMenuRegistrar
         WriteVerbs(basePath, FileVerbPath,
             new[]
             {
-                Leaf(VerbKey + "01_here", "极限解压：解压到当前文件夹", icon,
+                Leaf(VerbKey + "01_here", "极限压缩：解压到当前文件夹", icon,
                     $"{Quote(exe)} --extract \"%1\" --here", appliesTo),
-                Leaf(VerbKey + "02_sub", "极限解压：解压到「归档名」文件夹", icon,
+                Leaf(VerbKey + "02_sub", "极限压缩：解压到同名文件夹（如 1.zip → 1）", icon,
                     $"{Quote(exe)} --extract \"%1\" --to-subfolder", appliesTo),
-                Leaf(VerbKey + "03_here_delete", "极限解压：解压并删除已用完的分卷", icon,
+                Leaf(VerbKey + "03_here_delete", "极限压缩：解压并删除已用完的分卷", icon,
                     $"{Quote(exe)} --extract \"%1\" --here --delete-spent", appliesTo),
-                Leaf(VerbKey + "04_test", "极限解压：测试压缩包完整性", icon,
+                Leaf(VerbKey + "04_test", "极限压缩：测试压缩包完整性", icon,
                     $"{Quote(exe)} --extract \"%1\" --test", appliesTo),
-                Leaf(VerbKey + "20_zip", "极限解压：压缩到 ZIP…", icon,
+                Leaf(VerbKey + "20_zip", "极限压缩：压缩到 ZIP…", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format zip", null),
-                Leaf(VerbKey + "21_7z", "极限解压：压缩到 7z…", icon,
+                Leaf(VerbKey + "21_7z", "极限压缩：压缩到 7z…", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format 7z", null),
-                Leaf(VerbKey + "22_split", "极限解压：压缩并分卷…（7z · 50 MB）", icon,
+                Leaf(VerbKey + "22_split", "极限压缩：压缩并分卷…（7z · 50 MB）", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 52428800", null),
-                Leaf(VerbKey + "10_open", "用极限解压打开", icon, $"{Quote(exe)} \"%1\"", null),
+                Leaf(VerbKey + "10_open", "用极限压缩打开", icon, $"{Quote(exe)} \"%1\"", null),
             });
 
         if (options.IncludeFolderVerbs)
@@ -146,29 +200,29 @@ public static class ShellMenuRegistrar
             WriteVerbs(basePath, FolderVerbPath,
                 new[]
                 {
-                    Leaf(VerbKey + "01_all", "极限解压：解压此文件夹中的全部压缩包", icon,
+                    Leaf(VerbKey + "01_all", "极限压缩：解压此文件夹中的全部压缩包", icon,
                         $"{Quote(exe)} --extract-all \"%1\" --here", null),
-                    Leaf(VerbKey + "20_zip", "极限解压：压缩此文件夹到 ZIP…", icon,
+                    Leaf(VerbKey + "20_zip", "极限压缩：压缩此文件夹到 ZIP…", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format zip", null),
-                    Leaf(VerbKey + "21_7z", "极限解压：压缩此文件夹到 7z…", icon,
+                    Leaf(VerbKey + "21_7z", "极限压缩：压缩此文件夹到 7z…", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format 7z", null),
-                    Leaf(VerbKey + "22_split", "极限解压：压缩此文件夹并分卷…（7z · 50 MB）", icon,
+                    Leaf(VerbKey + "22_split", "极限压缩：压缩此文件夹并分卷…（7z · 50 MB）", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 52428800", null),
-                    Leaf(VerbKey + "10_open", "用极限解压打开", icon, $"{Quote(exe)} \"%1\"", null),
+                    Leaf(VerbKey + "10_open", "用极限压缩打开", icon, $"{Quote(exe)} \"%1\"", null),
                 });
 
             WriteVerbs(basePath, BackgroundVerbPath,
                 new[]
                 {
-                    Leaf(VerbKey + "01_all", "极限解压：解压此文件夹中的全部压缩包", icon,
+                    Leaf(VerbKey + "01_all", "极限压缩：解压此文件夹中的全部压缩包", icon,
                         $"{Quote(exe)} --extract-all \"%V\" --here", null),
-                    Leaf(VerbKey + "20_zip", "极限解压：压缩此文件夹到 ZIP…", icon,
+                    Leaf(VerbKey + "20_zip", "极限压缩：压缩此文件夹到 ZIP…", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format zip", null),
-                    Leaf(VerbKey + "21_7z", "极限解压：压缩此文件夹到 7z…", icon,
+                    Leaf(VerbKey + "21_7z", "极限压缩：压缩此文件夹到 7z…", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format 7z", null),
-                    Leaf(VerbKey + "22_split", "极限解压：压缩此文件夹并分卷…（7z · 50 MB）", icon,
+                    Leaf(VerbKey + "22_split", "极限压缩：压缩此文件夹并分卷…（7z · 50 MB）", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format 7z --split-volume 52428800", null),
-                    Leaf(VerbKey + "10_open", "用极限解压打开此处", icon, $"{Quote(exe)} \"%V\"", null),
+                    Leaf(VerbKey + "10_open", "用极限压缩打开此处", icon, $"{Quote(exe)} \"%V\"", null),
                 });
         }
 

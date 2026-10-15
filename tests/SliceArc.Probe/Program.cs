@@ -449,9 +449,22 @@ Check("7.7 测试脚手架已清理",
 Console.WriteLine();
 Console.WriteLine("=== 8. 资源管理器是否真的会显示（只读探测，需已注册）===");
 
-if (!ShellMenuRegistrar.IsRegistered())
+// Two mutually exclusive forms. The Windows 11 modern menu (sparse package) is
+// the preferred one; when it is live the classic flat verbs MUST be absent, or
+// every action shows up twice in "显示更多选项". The flat verbs only exist as
+// the fallback for machines without the modern menu.
+var modernInstalled = ShellPackageRegistrar.InstalledVersion() is not null;
+var classicInstalled = ShellMenuRegistrar.IsRegistered();
+
+if (!classicInstalled)
 {
-    Console.WriteLine("  跳过：当前用户还没注册右键菜单（先执行 SliceArc.App.exe --register）");
+    Check("8.1 现代菜单为唯一入口时，经典平铺动词一个都不剩",
+        modernInstalled,
+        modernInstalled
+            ? "现代菜单已注册，经典平铺动词 0 个"
+            : "右键菜单未安装（先执行 SliceArc.App.exe --register）");
+    Console.WriteLine("  注：现代菜单的子项由 Explorer 经 IExplorerCommand 惰性提供，");
+    Console.WriteLine("      注册表里没有静态动词可读回，子项由第 7 节与运行时冒烟覆盖。");
 }
 else
 {
@@ -464,16 +477,16 @@ else
     // directly in the top-level menu, not inside a submenu.
     var wanted = new[]
     {
-        "超速解压缩：解压到当前文件夹",
-        "超速解压缩：解压到「归档名」文件夹",
-        "超速解压缩：解压并删除已用完的分卷",
-        "超速解压缩：测试压缩包完整性",
-        "用超速解压缩打开",
+        "极限压缩：解压到当前文件夹",
+        "极限压缩：解压到同名文件夹",
+        "极限压缩：解压并删除已用完的分卷",
+        "极限压缩：测试压缩包完整性",
+        "用极限压缩打开",
     };
 
     var flat = onArchive.Where(e => e.Depth == 0).ToList();
     Check("8.1 压缩包上能看到本程序的命令组",
-        flat.Any(entry => entry.Text.Contains("超速解压缩")),
+        flat.Any(entry => entry.Text.Contains("极限压缩")),
         string.Join(" | ", flat.Select(entry => entry.Text)));
 
     var missing = wanted.Where(w => !flat.Any(entry => entry.Text.Contains(w))).ToList();
@@ -481,7 +494,7 @@ else
         missing.Count == 0,
         missing.Count == 0 ? $"找到 {wanted.Length} 项" : string.Join(" | ", missing));
 
-    // Two verb families share the "超速解压缩" prefix: the extract/test verbs are
+    // Two verb families share the "极限压缩" prefix: the extract/test verbs are
     // restricted to archive extensions via AppliesTo, while the compress verbs
     // deliberately apply to any file. They must be checked separately - a single
     // "does the prefix appear" test would report the intended behaviour as a bug.
@@ -505,10 +518,10 @@ else
     Check("8.4 .part01.exe 上出现解压动词，含「解压并删除已用完的分卷」",
         sfxHere && sfxDelete,
         $"解压到当前文件夹={sfxHere} 边解边删={sfxDelete}；实到动词: " +
-        string.Join(" | ", onSfx.Where(e => e.Text.Contains("超速解压缩")).Select(e => e.Text)));
+        string.Join(" | ", onSfx.Where(e => e.Text.Contains("极限压缩")).Select(e => e.Text)));
 
     Console.WriteLine($"  注册目标 = {ShellMenuRegistrar.RegisteredTarget() ?? "(未知)"}");
-    Console.WriteLine("  注：级联子项由资源管理器在展开时惰性创建，子命令本身由第 7 节从注册表读回验证。");
+    Console.WriteLine("  注：经典平铺形态只在没有 Win11 现代菜单时才应出现。");
 }
 
 // ===================================================================== 9

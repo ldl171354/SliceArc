@@ -1445,7 +1445,7 @@ public partial class MainWindow : Window
     // =====================================================================
 
     /// <summary>
-    /// The "工具" dropdown. Built in code so the password-recovery entry can be
+    /// The "工具" dropdown, built in code rather than in a second XAML file.
     /// </summary>
     private void OnToolsClick(object sender, RoutedEventArgs e)
     {
@@ -1462,7 +1462,6 @@ public partial class MainWindow : Window
 
         menu.Items.Add(MakeToolItem("压缩包校验", OnVerifyToolClick));
         menu.Items.Add(MakeToolItem("批量重命名", OnRenameToolClick));
-
 
         ToolsButton.ContextMenu = menu;
     }
@@ -1486,7 +1485,6 @@ public partial class MainWindow : Window
         var initial = _archive is null && _folder.Length > 0 ? _folder : null;
         new RenameWindow(initial) { Owner = this }.ShowDialog();
     }
-
 
     private async void OnExtractToClick(object sender, RoutedEventArgs e)
     {
@@ -1709,31 +1707,57 @@ public partial class MainWindow : Window
     // Shell integration
     // =====================================================================
 
-    private void OnShellMenuToggled(object sender, RoutedEventArgs e)
+    private async void OnShellMenuToggled(object sender, RoutedEventArgs e)
     {
         if (_shellUiSync) return;
 
+        var enable = ShellMenuCheck.IsChecked == true;
+        ShellMenuCheck.IsEnabled = false;
+        string? leftover = null;
+
         try
         {
-            if (ShellMenuCheck.IsChecked == true)
+            // Registration shells out to PowerShell (and may raise one UAC prompt),
+            // so it must not run on the UI thread - the window would freeze.
+            await Task.Run(() =>
             {
-                var exe = Environment.ProcessPath
-                          ?? throw new InvalidOperationException("无法确定自身可执行文件路径。");
-                ShellMenuRegistrar.Register(new ShellMenuOptions { ExecutablePath = exe });
-                AppLog.Info($"已注册右键菜单 -> {exe}");
-            }
-            else
-            {
-                ShellMenuRegistrar.Unregister();
-                AppLog.Info("已移除右键菜单");
-            }
+                if (enable)
+                {
+                    var exe = Environment.ProcessPath
+                              ?? throw new InvalidOperationException("无法确定自身可执行文件路径。");
+                    var appDir = Path.GetDirectoryName(exe)!;
+                    var result = ShellMenuRegistrar.Install(
+                        new ShellMenuOptions { ExecutablePath = exe }, appDir, AppLog.Info);
+                    AppLog.Info(result.ModernMenu
+                        ? $"已注册现代右键菜单（二级菜单）：{result.Detail}"
+                        : $"已注册经典右键菜单（平铺）：{result.Detail}");
+                }
+                else
+                {
+                    // The UI toggle never elevates; machine-level residue is
+                    // reported so the user knows to use the uninstaller instead
+                    // of being told everything is gone when it is not.
+                    var removal = ShellMenuRegistrar.RemoveAll(allowElevation: false, AppLog.Info);
+                    AppLog.Info(removal.Ok
+                        ? "已移除右键菜单"
+                        : "已移除当前用户菜单项，仍有系统级残留：" + removal.Detail);
+                    leftover = removal.Ok ? null : removal.Detail;
+                }
+            });
         }
         catch (Exception ex)
         {
             Report("右键菜单操作失败", ex);
         }
+        finally
+        {
+            ShellMenuCheck.IsEnabled = true;
+            SyncShellMenuUi();
+        }
 
-        SyncShellMenuUi();
+        if (leftover is not null)
+            ResultWindow.Show(this, ResultKind.Warning, "右键菜单已移除，但系统级组件仍在", leftover,
+                null, null, "运行安装版卸载程序可一并清理（会申请一次管理员权限）。");
     }
 
     private void SyncShellMenuUi()
@@ -1741,17 +1765,20 @@ public partial class MainWindow : Window
         _shellUiSync = true;
         try
         {
-            var registered = ShellMenuRegistrar.IsRegistered();
+            var modern = ShellPackageRegistrar.InstalledVersion() is not null;
+            var registered = ShellMenuRegistrar.IsMenuInstalled();
             ShellMenuCheck.IsChecked = registered;
 
             var self = Environment.ProcessPath;
-            var target = registered ? ShellMenuRegistrar.RegisteredTarget() : null;
-            ShellMenuCheck.ToolTip = registered
-                ? target is not null && self is not null &&
-                  !string.Equals(target, self, StringComparison.OrdinalIgnoreCase)
-                    ? $"当前指向 {target}；重新勾选可改为本程序（{self}）"
-                    : "已安装（当前用户，无需管理员）"
-                : "在当前用户注册表中安装 Explorer 右键菜单（无需管理员）";
+            var target = ShellMenuRegistrar.RegisteredTarget();
+            ShellMenuCheck.ToolTip = !registered
+                ? "在当前用户注册表中安装 Explorer 右键菜单（Win11 为二级菜单，不干扰其他条目）"
+                : modern
+                    ? "已安装 Win11 现代右键菜单（二级菜单）"
+                    : target is not null && self is not null &&
+                      !string.Equals(target, self, StringComparison.OrdinalIgnoreCase)
+                        ? $"经典菜单当前指向 {target}；重新勾选可改为本程序（{self}）"
+                        : "已安装经典右键菜单（当前用户，无需管理员）";
         }
         catch (Exception ex)
         {

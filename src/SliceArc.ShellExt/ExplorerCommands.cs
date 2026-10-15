@@ -197,7 +197,7 @@ public sealed class ExtractHereCommand : ExplorerCommandBase
 public sealed class ExtractSubfolderCommand : ExplorerCommandBase
 {
     public override Guid CanonicalGuid => CommandGuids.ExtractSubfolder;
-    public override string Title => "解压到「归档名」文件夹";
+    public override string Title => "解压到同名文件夹（如 1.zip → 1）";
     public override bool IsVisible(IReadOnlyList<string> p) => AnyArchive(p);
     public override string ArgumentsFor(string path) => $"--extract {Quote(path)} --to-subfolder";
 }
@@ -230,7 +230,7 @@ public sealed class TestArchiveCommand : ExplorerCommandBase
 public sealed class OpenCommand : ExplorerCommandBase
 {
     public override Guid CanonicalGuid => CommandGuids.Open;
-    public override string Title => "用极限解压打开";
+    public override string Title => "用极限压缩打开";
     public override string ArgumentsFor(string path) => Quote(path);
 }
 
@@ -332,7 +332,7 @@ public sealed class SliceArcRootCommand : IExplorerCommand
 
     public int GetTitle(IntPtr psiItemArray, out IntPtr ppszName)
     {
-        ppszName = Marshal.StringToCoTaskMemUni("极限解压");
+        ppszName = Marshal.StringToCoTaskMemUni("极限压缩");
         return HResults.S_OK;
     }
 
@@ -344,7 +344,7 @@ public sealed class SliceArcRootCommand : IExplorerCommand
 
     public int GetToolTip(IntPtr psiItemArray, out IntPtr ppszInfotip)
     {
-        ppszInfotip = Marshal.StringToCoTaskMemUni("极限解压");
+        ppszInfotip = Marshal.StringToCoTaskMemUni("极限压缩");
         return HResults.S_OK;
     }
 

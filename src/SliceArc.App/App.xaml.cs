@@ -143,33 +143,48 @@ public partial class App : Application
             {
                 var exe = Environment.ProcessPath
                           ?? throw new InvalidOperationException("无法确定自身可执行文件路径。");
-                ShellMenuRegistrar.Register(new ShellMenuOptions
-                {
-                    ExecutablePath = exe,
-                    OnlyArchiveExtensions = !cli.AllFiles,
-                });
-                AppLog.Out($"已注册右键菜单 -> {exe}" + (cli.AllFiles ? "（所有文件）" : "（仅压缩包）"));
-
                 var appDir = Path.GetDirectoryName(exe)!;
-                var modern = ShellPackageRegistrar.Register(appDir, AppLog.Out);
-                AppLog.Out(modern.Ok
-                    ? $"现代右键菜单（Win11 一级菜单）：{modern.Reason}"
-                    : $"现代右键菜单：跳过 - {modern.Reason}");
+                var result = ShellMenuRegistrar.Install(
+                    new ShellMenuOptions
+                    {
+                        ExecutablePath = exe,
+                        OnlyArchiveExtensions = !cli.AllFiles,
+                    },
+                    appDir,
+                    AppLog.Out);
+
+                AppLog.Out(result.ModernMenu
+                    ? $"已注册 Win11 现代右键菜单（一级菜单是「{Brand.Name}」的二级菜单）：{result.Detail}"
+                    : $"已注册经典右键菜单（平铺）-> {exe}：现代菜单不可用 - {result.Detail}");
 
                 // File associations are deliberately NOT touched here: which types
                 // to take over is the user's explicit choice in the first-run
                 // guide / Settings > 文件关联. Registering them all now would
                 // silently grab every unassociated archive extension.
-            }
-            else
-            {
-                ShellMenuRegistrar.Unregister();
-                ShellPackageRegistrar.Unregister(AppLog.Out);
-                FileAssociationRegistrar.Unregister();
-                AppLog.Out("已移除右键菜单和文件关联注册");
+                Shutdown(0);
+                return;
             }
 
-            Shutdown(0);
+            // Uninstall. The current-user part never needs elevation; the sparse
+            // package and the machine-trusted certificate do, which is why this
+            // asks for exactly one elevation - and says so if it is refused.
+            var removal = ShellMenuRegistrar.RemoveAll(allowElevation: true, AppLog.Out);
+            FileAssociationRegistrar.Unregister();
+
+            if (removal.Ok)
+            {
+                AppLog.Out("已移除右键菜单、现代菜单包、本机证书与文件关联：" + removal.Detail);
+                Shutdown(0);
+                return;
+            }
+
+            var summary = "右键菜单与文件关联已移除，但系统级组件未能清理干净：" + removal.Detail;
+            AppLog.Error(summary);
+            if (!_silentFailures)
+                ResultWindow.Show(null, ResultKind.Warning, "卸载未完全清理", summary, null, null,
+                    $"可在「设置 → 应用 → 已安装的应用」中卸载「{Brand.Name} 右键菜单」，" +
+                    "或在管理员 PowerShell 中执行：Get-AppxPackage SliceArc.ContextMenu | Remove-AppxPackage");
+            Shutdown(1);
         }
         catch (Exception ex)
         {
@@ -186,8 +201,8 @@ public partial class App : Application
         {
             var registered = ShellMenuRegistrar.IsRegistered();
             AppLog.Out(registered
-                ? $"右键菜单：已注册 -> {ShellMenuRegistrar.RegisteredTarget() ?? "(未知)"}"
-                : "右键菜单：未注册");
+                ? $"经典右键菜单：已注册 -> {ShellMenuRegistrar.RegisteredTarget() ?? "(未知)"}"
+                : "经典右键菜单：未注册");
 
             foreach (var line in ShellMenuRegistrar.Inspect()) AppLog.Out("  " + line);
 
@@ -195,6 +210,9 @@ public partial class App : Application
             AppLog.Out(modernVersion is not null
                 ? $"现代右键菜单：已注册 v{modernVersion}"
                 : "现代右键菜单：未注册");
+            AppLog.Out(ShellMenuRegistrar.IsMenuInstalled()
+                ? "右键菜单总状态：已启用"
+                : "右键菜单总状态：未启用");
             var exePath = Environment.ProcessPath;
             if (exePath is not null)
             {

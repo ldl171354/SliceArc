@@ -22,7 +22,7 @@
     Version="1.0.0.0" />
 
   <Properties>
-    <DisplayName>超速解压缩 右键菜单</DisplayName>
+    <DisplayName>极限压缩 右键菜单</DisplayName>
     <PublisherDisplayName>LD</PublisherDisplayName>
     <Logo>Assets\Logo.png</Logo>
     <uap10:AllowExternalContent>true</uap10:AllowExternalContent>
@@ -43,15 +43,15 @@
   <Applications>
     <Application Id="SliceArcContextMenu" Executable="SliceArc.App.exe" EntryPoint="Windows.FullTrustApplication">
       <uap:VisualElements
-        DisplayName="超速解压缩 右键菜单"
-        Description="超速解压缩 现代右键菜单扩展"
+        DisplayName="极限压缩 右键菜单"
+        Description="极限压缩 现代右键菜单扩展"
         Square150x150Logo="Assets\Logo.png"
         Square44x44Logo="Assets\Logo.png"
         BackgroundColor="transparent" />
       <Extensions>
         <com:Extension Category="windows.comServer">
           <com:ComServer>
-            <com:SurrogateServer DisplayName="超速解压缩 右键菜单">
+            <com:SurrogateServer DisplayName="极限压缩 右键菜单">
               <com:Class
                 Id="7A1CEA11-5A1C-4C00-A000-000000000001"
                 Path="SliceArc.ShellExt.comhost.dll"
