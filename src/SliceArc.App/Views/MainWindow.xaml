@@ -302,6 +302,7 @@
                 <DataGrid.ContextMenu>
                     <ContextMenu>
                         <MenuItem Header="预览图片" Click="OnPreviewClick" />
+                        <MenuItem Header="用关联程序打开（临时副本）" Click="OnOpenExternallyClick" />
                         <MenuItem Header="解压选中项到…" Click="OnExtractToClick" />
                         <MenuItem Header="解压到当前文件夹" Click="OnExtractHereClick" />
                         <MenuItem Header="快速解压（同名子文件夹）" Click="OnQuickExtractClick" />

@@ -55,6 +55,46 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
     /// <summary>Raised once the object has released every decode, i.e. the copy is over.</summary>
     public event Action? Finished;
 
+    /// <summary>True while the shell may still be pulling bytes (decode running or
+    /// a reader that has been handed out but not finished). MainWindow blocks the
+    /// window close on this, borrowed from 7-Zip's k_SourceFlags_WaitFinish logic:
+    /// killing the process mid-copy truncates the file the user is watching appear.</summary>
+    public bool TransferInFlight
+    {
+        get
+        {
+            lock (_gate)
+            {
+                if (_disposed) return false;
+                return _dragLoopActive || (_readers.Count > 0 && _readers.Any(r => !r.IsFinished));
+            }
+        }
+    }
+
+    private bool _dragLoopActive;
+
+    /// <summary>Set by <see cref="DragOut"/> around the OLE loop so the object knows
+    /// the drop target is still deciding even before the first stream is requested.</summary>
+    internal void SetDragLoopActive(bool active)
+    {
+        lock (_gate) _dragLoopActive = active;
+    }
+
+    // ---- CF_HDROP compatibility fallback (learned from 7-Zip PanelDrag.cpp and Bandizip) ----
+    // 7-Zip drags archive contents out with a *real* temp directory and CF_HDROP only.
+    // Many targets (Sticky Notes, some upload dialogs, older apps) refuse virtual
+    // FileGroupDescriptor data and ask CF_HDROP (format id 15). We keep the zero-temp
+    // stream path as primary for Explorer, but answer CF_HDROP by extracting the
+    // dragged items to a temp folder on demand - only when a target actually asks.
+    private string? _hdropRoot;
+    private IReadOnlyList<string>? _hdropPaths;
+    private bool _usedTempFallback;
+    private const long MaxFallbackBytes = 2L * 1024 * 1024 * 1024;
+    // CF_HDROP stays OUT of EnumFormatEtc on purpose: if we advertise it, Explorer
+    // prefers the real-path (temp-extracting) form and we lose the zero-temp property.
+    // It is answered only when a target asks for it directly.
+    private const ushort CF_HDROP = 15;
+
     public VirtualFileDataObject(
         string archivePath,
         IReadOnlyList<VirtualFileEntry> files,
@@ -103,18 +143,27 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
             if (entry.Modified is not null) flags |= Ole32.FD_WRITESTIME;
 
             WriteUInt32(buffer, offset, flags);
-            WriteUInt32(buffer, offset + 28,
+            // Field offsets are the ones ShlObj_core.h _FILEDESCRIPTORW actually has,
+            // cross-checked with the CLR's own layout engine at Pack=4:
+            //   0 dwFlags | 4 clsid | 20 sizl | 28 pointl | 36 dwFileAttributes
+            //   40 ftCreation | 48 ftLastAccess | 56 ftLastWrite
+            //   64 nFileSizeHigh | 68 nFileSizeLow | 72 cFileName
+            // The 8-byte pointl was the one we skipped. With it missing the shell read
+            // cFileName at 72 (we wrote 64), so it saw an empty name, and read the name
+            // bytes as nFileSizeHigh/Low - it rejected the drop without ever asking for
+            // FileContents, which is exactly the "drag does nothing" symptom.
+            WriteUInt32(buffer, offset + 36,
                 entry.IsDirectory ? Ole32.FILE_ATTRIBUTE_DIRECTORY : Ole32.FILE_ATTRIBUTE_NORMAL);
 
             if (entry.Modified is { } modified)
-                BitConverter.TryWriteBytes(buffer.AsSpan(offset + 48, 8), modified.ToFileTimeUtc());
+                BitConverter.TryWriteBytes(buffer.AsSpan(offset + 56, 8), modified.ToFileTimeUtc());
 
-            WriteUInt32(buffer, offset + 56, (uint)(entry.Size >> 32));
-            WriteUInt32(buffer, offset + 60, (uint)(entry.Size & 0xFFFFFFFF));
+            WriteUInt32(buffer, offset + 64, (uint)(entry.Size >> 32));
+            WriteUInt32(buffer, offset + 68, (uint)(entry.Size & 0xFFFFFFFF));
 
             var name = entry.RelativeName.Replace('/', '\\');
             var characters = Math.Min(name.Length, 259);   // 260 WCHARs including the terminator
-            for (var c = 0; c < characters; c++) WriteUInt16(buffer, offset + 64 + c * 2, name[c]);
+            for (var c = 0; c < characters; c++) WriteUInt16(buffer, offset + 72 + c * 2, name[c]);
         }
 
         return buffer;
@@ -126,27 +175,55 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
 
     public int GetData(ref FORMATETC format, out STGMEDIUM medium)
     {
+        var hr = GetDataInner(ref format, out medium);
+        ProbeLog?.Invoke($"GetData cf={NameOf(format.cfFormat)} lindex={format.lindex} -> 0x{hr:X8}" +
+                        (hr == Ole32.S_OK ? $" medium={medium.tymed:X} {MediumInfo(in medium)}" : ""));
+        return hr;
+    }
+
+    private static string MediumInfo(in STGMEDIUM m) => m.tymed switch
+    {
+        Ole32.TYMED_HGLOBAL => $"hglobal 大小={GlobalSizeOf(m.unionmember)}",
+        Ole32.TYMED_ISTREAM => "IStream",
+        _ => "medium",
+    };
+
+    [DllImport("ole32.dll")]
+    private static extern int ReleaseStgMedium(ref STGMEDIUM pmedium);
+
+    private static long GlobalSizeOf(IntPtr h) => h == IntPtr.Zero ? -1 : GlobalSize(h).ToInt64();
+
+    [DllImport("kernel32.dll")]
+    private static extern IntPtr GlobalSize(IntPtr h);
+
+    private int GetDataInner(ref FORMATETC format, out STGMEDIUM medium)
+    {
         medium = default;
         if (format.dwAspect != Ole32.DVASPECT_CONTENT) return Ole32.DV_E_DVASPECT;
 
-        if (format.cfFormat == Formats.Descriptor && (format.tymed & Ole32.TYMED_HGLOBAL) != 0)
+        // Same "tymed == 0 means any medium" convention QueryGetData answers.
+        var tymed = format.tymed == 0 ? AcceptedMedium(format.cfFormat) : format.tymed;
+        ProbeLog?.Invoke($"GetData 请求 cf={NameOf(format.cfFormat)} tymed=0x{format.tymed:X} lindex={format.lindex} aspect={format.dwAspect}");
+
+        if (format.cfFormat == Formats.Descriptor && (tymed & Ole32.TYMED_HGLOBAL) != 0)
         {
             medium = GlobalMedium(BuildDescriptorBytes(_files));
             return Ole32.S_OK;
         }
 
-        if (format.cfFormat == Formats.PreferredEffect && (format.tymed & Ole32.TYMED_HGLOBAL) != 0)
+        if (format.cfFormat == Formats.PreferredEffect && (tymed & Ole32.TYMED_HGLOBAL) != 0)
         {
             medium = GlobalMedium(BitConverter.GetBytes(Ole32.DROPEFFECT_COPY));
             return Ole32.S_OK;
         }
 
-        if (format.cfFormat == Formats.Contents && (format.tymed & Ole32.TYMED_ISTREAM) != 0)
+        if (format.cfFormat == Formats.Contents && (tymed & Ole32.TYMED_ISTREAM) != 0)
         {
             if (format.lindex < 0 || format.lindex >= _files.Count) return Ole32.DV_E_LINDEX;
 
             var stream = CreateStream(format.lindex);
             if (stream is null) return Ole32.STG_E_READFAULT;
+            _streamsRequested = true;
 
             medium = new STGMEDIUM
             {
@@ -157,6 +234,18 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
             return Ole32.S_OK;
         }
 
+        // A target that only understands real paths (Sticky Notes, older apps, some
+        // upload pickers) asks for CF_HDROP. Extract the dragged items to a temp
+        // folder once and hand back that file list. This is 7-Zip/Bandizip's model;
+        // we keep it off the common Explorer path so the normal drag stays zero-temp.
+        if (format.cfFormat == CF_HDROP && (tymed & Ole32.TYMED_HGLOBAL) != 0)
+        {
+            var paths = EnsureTempExtracted();
+            if (paths is null) return Ole32.STG_E_READFAULT;
+            medium = BuildHDropMedium(paths);
+            return Ole32.S_OK;
+        }
+
         return Ole32.DV_E_FORMATETC;
     }
 
@@ -164,18 +253,172 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
 
     public int QueryGetData(ref FORMATETC format)
     {
+        var answer = AnswerQuery(ref format);
+        ProbeLog?.Invoke($"QueryGetData cf={NameOf(format.cfFormat)} tymed=0x{format.tymed:X} lindex={format.lindex} -> 0x{answer:X8}");
+        return answer;
+    }
+
+    /// <summary>
+    /// Records what the drop target actually asked for. Without this, "the drag did
+    /// nothing" has no evidence behind it: the shell's probes are the only witness.
+    /// Capped because a shell can ask dozens of times per drag.
+    /// </summary>
+    public static Action<string>? ProbeLog { get; set; }
+
+    private int AnswerQuery(ref FORMATETC format)
+    {
         if (format.dwAspect != Ole32.DVASPECT_CONTENT) return Ole32.DV_E_DVASPECT;
 
-        if (format.cfFormat == Formats.Descriptor && (format.tymed & Ole32.TYMED_HGLOBAL) != 0)
+        // tymed == 0 means "any medium will do" - the convention most shell and
+        // third-party targets use when probing. Answering DV_E_FORMATETC here makes
+        // Explorer conclude there is nothing to copy: the drag shows no cursor and
+        // DoDragDrop returns effect=0, i.e. "nothing happened". Mask against what we
+        // actually offer instead of requiring an exact match.
+        var tymed = format.tymed == 0 ? AcceptedMedium(format.cfFormat) : format.tymed;
+        if (tymed == 0) return Ole32.DV_E_FORMATETC;
+
+        if (format.cfFormat == Formats.Descriptor && (tymed & Ole32.TYMED_HGLOBAL) != 0)
             return Ole32.S_OK;
 
-        if (format.cfFormat == Formats.PreferredEffect && (format.tymed & Ole32.TYMED_HGLOBAL) != 0)
+        if (format.cfFormat == Formats.PreferredEffect && (tymed & Ole32.TYMED_HGLOBAL) != 0)
             return Ole32.S_OK;
 
-        if (format.cfFormat == Formats.Contents && (format.tymed & Ole32.TYMED_ISTREAM) != 0)
-            return format.lindex >= -1 && format.lindex < _files.Count ? Ole32.S_OK : Ole32.DV_E_LINDEX;
+        if (format.cfFormat == Formats.Contents && (tymed & Ole32.TYMED_ISTREAM) != 0)
+            // Must agree with GetData: claiming a stream exists at lindex=-1 and then
+            // answering DV_E_LINDEX makes the shell treat the whole object as broken.
+            return format.lindex >= 0 && format.lindex < _files.Count ? Ole32.S_OK : Ole32.DV_E_LINDEX;
+
+        // CF_HDROP is deliberately NOT advertised here (and stays out of
+        // EnumFormatEtc): probing targets that see it switch to copying from the real
+        // temp paths instead of the streams, and the release timer would reclaim that
+        // folder while the copy is still reading it - effect=1, zero bytes on disk.
+        // A target that asks for CF_HDROP *directly* via GetData still gets the
+        // temp-extracted list (that is the compat lane for paths-only apps).
+        if (format.cfFormat == CF_HDROP)
+            return Ole32.DV_E_FORMATETC;
 
         return Ole32.DV_E_FORMATETC;
+    }
+
+    /// <summary>The mediums this object can serve for a given clipboard format.</summary>
+    private static uint AcceptedMedium(ushort cfFormat) => cfFormat switch
+    {
+        var cf when cf == Formats.Descriptor => Ole32.TYMED_HGLOBAL,
+        var cf when cf == Formats.PreferredEffect => Ole32.TYMED_HGLOBAL,
+        var cf when cf == Formats.Contents => Ole32.TYMED_ISTREAM,
+        var cf when cf == CF_HDROP => Ole32.TYMED_HGLOBAL,
+        _ => 0,
+    };
+
+    /// <summary>Human-readable clipboard format name for the probe log.</summary>
+    private static string NameOf(ushort cf) => cf switch
+    {
+        var x when x == Formats.Descriptor => "FileGroupDescriptorW",
+        var x when x == Formats.Contents => "FileContents",
+        var x when x == Formats.PreferredEffect => "PreferredDropEffect",
+        var x when x == CF_HDROP => "CF_HDROP",
+        _ => $"cf#{cf}",
+    };
+
+    /// <summary>
+    /// Extract the dragged items into a throwaway temp folder once, and remember it.
+    /// Only runs when a target asked for CF_HDROP, so Explorer's normal zero-temp copy
+    /// never pays this. 7-Zip creates such a temp folder up front ("7zE"); we create it
+    /// on demand instead, which keeps the common path temp-free while staying compatible
+    /// with targets that only understand real paths.
+    /// </summary>
+    private IReadOnlyList<string>? EnsureTempExtracted()
+    {
+        lock (_gate)
+        {
+            if (_disposed) return null;
+            if (_hdropPaths is not null) return _hdropPaths;
+        }
+
+        if (TotalBytes > MaxFallbackBytes)
+        {
+            ProbeLog?.Invoke($"CF_HDROP 回退放弃：{TotalBytes} 字节超过 {MaxFallbackBytes} 上限");
+            return null;
+        }
+
+        var root = Path.Combine(Path.GetTempPath(), "SliceArc-drag-" + Guid.NewGuid().ToString("N"));
+        var paths = new List<string>();
+        try
+        {
+            Directory.CreateDirectory(root);
+            for (var i = 0; i < _files.Count; i++)
+            {
+                var file = _files[i];
+                var target = Path.Combine(root, file.RelativeName.Replace('/', '\\'));
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+
+                using var reader = new ArchiveEntryReader(_archivePath, file.ArchivePath, file.Size, _progress);
+                var buffer = new byte[1 << 16];
+                using (var fs = File.Create(target))
+                {
+                    while (true)
+                    {
+                        var n = reader.Read(buffer);
+                        if (n <= 0) break;
+                        fs.Write(buffer, 0, n);
+                    }
+                }
+                paths.Add(target);
+            }
+        }
+        catch (Exception ex)
+        {
+            ProbeLog?.Invoke($"CF_HDROP 回退失败: {ex.Message}");
+            try { if (Directory.Exists(root)) Directory.Delete(root, recursive: true); } catch { }
+            return null;
+        }
+
+        lock (_gate)
+        {
+            if (_disposed) return null;
+            _usedTempFallback = true;
+            _hdropRoot = root;
+            _hdropPaths = paths;
+            ProbeLog?.Invoke($"CF_HDROP 回退：已解压 {paths.Count} 项到 {root}");
+            return paths;
+        }
+    }
+
+    /// <summary>CF_HDROP payload: DROPFILES header then the double-null WCHAR list.</summary>
+    private static STGMEDIUM BuildHDropMedium(IReadOnlyList<string> paths)
+    {
+        const int headerSize = 20; // pFiles, pt.x, pt.y, fNC, fWide
+        var chars = new List<char>();
+        foreach (var p in paths)
+        {
+            chars.AddRange(p.ToCharArray());
+            chars.Add('\0');
+        }
+        chars.Add('\0');
+
+        var byteLen = headerSize + chars.Count * 2;
+        var handle = Ole32.GlobalAlloc(Ole32.GMEM_MOVEABLE, (UIntPtr)byteLen);
+        var ptr = Ole32.GlobalLock(handle);
+        try
+        {
+            Span<byte> header = stackalloc byte[headerSize];
+            BitConverter.TryWriteBytes(header[0..4], headerSize); // pFiles: list starts right after
+            BitConverter.TryWriteBytes(header[16..20], 1);        // fWide = TRUE
+            for (var i = 0; i < headerSize; i++) Marshal.WriteByte(ptr, i, header[i]);
+            for (var i = 0; i < chars.Count; i++)
+                Marshal.WriteInt16(ptr, headerSize + i * 2, chars[i]);
+        }
+        finally
+        {
+            Ole32.GlobalUnlock(handle);
+        }
+
+        return new STGMEDIUM
+        {
+            tymed = Ole32.TYMED_HGLOBAL,
+            unionmember = handle,
+            pUnkForRelease = IntPtr.Zero,
+        };
     }
 
     public int GetCanonicalFormatEtc(ref FORMATETC formatIn, out FORMATETC formatOut)
@@ -278,9 +521,9 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
     /// backstop for a target that never asks for anything.
     /// </summary>
     public void MarkDragFinished(bool cancelled) =>
-        ReleaseWhenIdle(cancelled ? TimeSpan.FromSeconds(15) : TimeSpan.FromMinutes(10));
+        ReleaseWhenIdle(cancelled ? TimeSpan.FromSeconds(15) : TimeSpan.FromMinutes(10), cancelled);
 
-    private void ReleaseWhenIdle(TimeSpan grace)
+    private void ReleaseWhenIdle(TimeSpan grace, bool cancelled)
     {
         var deadline = DateTime.UtcNow + grace;
 
@@ -293,7 +536,13 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
                 lock (_gate)
                 {
                     if (_disposed) return;
-                    idle = _readers.Count == 0 || _readers.All(reader => reader.IsFinished);
+                    // A successful drop means the shell may start pulling AFTER
+                    // DoDragDrop returned (its copy runs on its own thread). While the
+                    // readers list is still empty we cannot conclude "idle" - the
+                    // earlier behaviour disposed instantly and Explorer's late pull got
+                    // STG_E_READFAULT: effect=1, zero-byte result. Wait for either a
+                    // finished stream or the deadline instead.
+                    idle = cancelled || (_streamsRequested && _readers.Count > 0 && _readers.All(reader => reader.IsFinished));
                 }
 
                 if (idle || DateTime.UtcNow >= deadline) Dispose();
@@ -301,9 +550,12 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
         }
     }
 
+    private bool _streamsRequested;
+
     /// <summary>Cancel every in-flight decode and drop the native roots.</summary>
     public void Dispose()
     {
+        string? tempRoot;
         lock (_gate)
         {
             if (_disposed) return;
@@ -314,6 +566,16 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
             foreach (var reader in _readers) reader.Dispose();
             _readers.Clear();
             _live.Clear();
+            tempRoot = _hdropRoot;
+        }
+
+        // The temp folder backs a CF_HDROP fallback: it must live until the target
+        // finished copying (Dispose only runs once the release timer sees no stream in
+        // flight), so deleting here is the safe point, mirroring 7-Zip's own cleanup.
+        if (tempRoot is not null)
+        {
+            try { if (Directory.Exists(tempRoot)) Directory.Delete(tempRoot, recursive: true); }
+            catch (Exception ex) { ProbeLog?.Invoke($"临时目录清理失败 {tempRoot}: {ex.Message}"); }
         }
 
         Finished?.Invoke();
@@ -416,9 +678,16 @@ public sealed class VirtualFileStream : IOleStream, IDisposable
 
         // The whole structure is written, not just the two fields we know about:
         // the shell reads pwcsName and would otherwise walk into garbage.
+        // STATFLAG_DEFAULT means the caller wants the stream name and frees it with
+        // CoTaskMemFree. S_OK with a NULL name is a contract violation the shell
+        // copy engine takes badly.
+        var namePtr = IntPtr.Zero;
+        if ((grfStatFlag & (int)Ole32.STATFLAG_NONAME) == 0 && Name.Length > 0)
+            namePtr = Marshal.StringToCoTaskMemUni(Name);
+
         var stat = new STATSTG
         {
-            pwcsName = IntPtr.Zero,
+            pwcsName = namePtr,
             type = Ole32.STGTY_STREAM,
             cbSize = (ulong)_reader.Length,
         };
@@ -430,7 +699,41 @@ public sealed class VirtualFileStream : IOleStream, IDisposable
 
     public int SetSize(long libNewSize) => Ole32.E_NOTIMPL;
 
-    public int CopyTo(IntPtr pstm, long cb, IntPtr pcbRead, IntPtr pcbWritten) => Ole32.E_NOTIMPL;
+    /// <summary>
+    /// The shell copy engine uses CopyTo; refusing it aborts the copy. Implemented
+    /// on top of the same reader as Read, so the byte accounting stays honest.
+    /// </summary>
+    public int CopyTo(IntPtr pstm, long cb, IntPtr pcbRead, IntPtr pcbWritten)
+    {
+        if (pstm == IntPtr.Zero) return Ole32.STG_E_INVALIDPOINTER;
+        if (_disposed) return Ole32.STG_E_READFAULT;
+
+        var target = (System.Runtime.InteropServices.ComTypes.IStream)
+            Marshal.GetObjectForIUnknown(pstm);
+
+        var want = cb < 0 ? long.MaxValue : cb;
+        var buffer = new byte[Math.Min(1 << 20, Math.Max(1, (long)want))];
+        long moved = 0;
+        try
+        {
+            while (moved < want)
+            {
+                int take = _reader.Read(buffer.AsSpan(0, buffer.Length));
+                if (take <= 0) break;
+                target.Write(buffer, take, IntPtr.Zero);
+                moved += take;
+            }
+        }
+        catch (Exception ex)
+        {
+            System.Diagnostics.Debug.WriteLine($"[SliceArc] 拖拽 CopyTo 失败: {ex.Message}");
+            return Ole32.STG_E_READFAULT;
+        }
+
+        if (pcbRead != IntPtr.Zero) Marshal.WriteInt64(pcbRead, moved);
+        if (pcbWritten != IntPtr.Zero) Marshal.WriteInt64(pcbWritten, moved);
+        return Ole32.S_OK;
+    }
 
     public int Commit(int grfCommitFlags) => Ole32.E_NOTIMPL;
 
@@ -519,6 +822,9 @@ public sealed class SliceArcDropSource : IDropSource
 /// <summary>Runs the OLE drag loop for a virtual file drop.</summary>
 public static class DragOut
 {
+    /// <summary>Set by the host to receive a diagnostic trail of each drag.</summary>
+    public static Action<string>? Diagnostics { get; set; }
+
     /// <summary>
     /// Blocking: returns the effect the target accepted (0 when the drag was
     /// cancelled or dropped somewhere that refused it). Must be called from an
@@ -530,21 +836,27 @@ public static class DragOut
 
         // DoDragDrop needs OLE initialised on this thread. WPF usually has it,
         // but a CLI-started process may not; S_FALSE and RPC_E_CHANGED_MODE are
-        // both harmless here.
-        Ole32.OleInitialize(IntPtr.Zero);
+        // both harmless here. A real failure here is what makes a drag silently
+        // do nothing, so it is worth recording instead of swallowing.
+        var oleHr = Ole32.OleInitialize(IntPtr.Zero);
+        Diagnostics?.Invoke($"OleInitialize hr=0x{oleHr:X8}");
 
         var source = new SliceArcDropSource();
         var dataPointer = Marshal.GetComInterfaceForObject(dataObject, typeof(IOleDataObject));
         var sourcePointer = Marshal.GetComInterfaceForObject(source, typeof(IDropSource));
         try
         {
+            dataObject.SetDragLoopActive(true);
+            Diagnostics?.Invoke($"DoDragDrop 开始：{dataObject.FileCount} 个文件 / {dataObject.TotalBytes} 字节");
             var hr = Ole32.DoDragDrop(dataPointer, sourcePointer, Ole32.DROPEFFECT_COPY, out var effect);
+            Diagnostics?.Invoke($"DoDragDrop 返回 hr=0x{hr:X8} effect={effect}");
             if (hr == Ole32.DRAGDROP_S_DROP) return effect;
             if (hr == Ole32.DRAGDROP_S_CANCEL) return 0;
             throw new InvalidOperationException($"DoDragDrop 失败，HRESULT=0x{hr:X8}。");
         }
         finally
         {
+            dataObject.SetDragLoopActive(false);
             Marshal.Release(dataPointer);
             Marshal.Release(sourcePointer);
         }

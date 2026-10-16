@@ -264,6 +264,12 @@ public partial class MainWindow : Window
     private Point _thumbDragStart;
     private bool _thumbDragging;
 
+    /// <summary>The drag-out object whose bytes the shell may still be pulling after
+    /// DoDragDrop returned. Closing the window (and the process) while it is in
+    /// flight truncates the file the user is watching appear — 7-Zip guards this
+    /// with k_SourceFlags_WaitFinish; we cancel the close and say why instead.</summary>
+    private VirtualFileDataObject? _activeDrag;
+
     private void OnViewModeClick(object sender, RoutedEventArgs e)
     {
         var tag = (sender as System.Windows.Controls.Primitives.ToggleButton)?.Tag as string;
@@ -365,7 +371,9 @@ public partial class MainWindow : Window
             if (e.ClickCount == 2)
             {
                 if (row.IsDirectory) { EnterThumbDirectory(row); return; }
-                if (_archive is not null && PreviewWindow.IsPreviewable(row.EntryPath)) { OpenPreview(row); }
+                if (_archive is null) return;
+                if (PreviewWindow.IsPreviewable(row.EntryPath)) { OpenPreview(row); }
+                else { OpenEntryExternally(row); }
                 return;
             }
             // single click toggles selection so 解压选中项 keeps working
@@ -1232,7 +1240,23 @@ public partial class MainWindow : Window
 
     private void OnGridPreviewMouseMove(object sender, MouseEventArgs e)
     {
-        if (_busy || _dragging) return;
+        if (_busy)
+        {
+            // "I dragged and nothing happened" while a task/dialog owns the window is
+            // the single most confusing silent no-op; say so in the log.
+            if (e.LeftButton == MouseButtonState.Pressed)
+            {
+                var p = e.GetPosition(EntryGrid);
+                if (Math.Abs(p.X - _dragStart.X) > SystemParameters.MinimumHorizontalDragDistance ||
+                    Math.Abs(p.Y - _dragStart.Y) > SystemParameters.MinimumVerticalDragDistance)
+                {
+                    AppLog.Info("拖拽: 被忙状态挡下（有任务或对话框进行中）");
+                    return;
+                }
+            }
+            return;
+        }
+        if (_dragging) return;
         if (e.LeftButton != MouseButtonState.Pressed) return;
 
         var position = e.GetPosition(EntryGrid);
@@ -1244,7 +1268,14 @@ public partial class MainWindow : Window
 
         var row = (e.OriginalSource as FrameworkElement)?.DataContext as BrowserRow
                   ?? EntryGrid.SelectedItem as BrowserRow;
-        if (row is null) return;
+        // A drag that starts nothing is otherwise indistinguishable from a drag that
+        // was refused by the shell, so the reason for "nothing happened" gets logged.
+        if (row is null)
+        {
+            AppLog.Info($"拖拽: 越过阈值但取不到行（OriginalSource={e.OriginalSource?.GetType().Name ?? "null"} SelectedItem={EntryGrid.SelectedItem?.GetType().Name ?? "null"}）");
+            return;
+        }
+        AppLog.Info($"拖拽: 列表手势启动 '{row.Name}' 归档={_archive is not null}");
 
         // Dragging an unselected row drags that row, exactly like Explorer does.
         var selection = EntryGrid.SelectedItems.Cast<BrowserRow>().ToList();
@@ -1287,6 +1318,10 @@ public partial class MainWindow : Window
 
     private void DragArchiveEntriesOut(IReadOnlyList<BrowserRow> rows)
     {
+        // A drag that produces no file is otherwise invisible in the log; route the
+        // OLE result there so the failure can be diagnosed after the fact.
+        DragOut.Diagnostics ??= msg => AppLog.Info("拖拽: " + msg);
+        VirtualFileDataObject.ProbeLog ??= msg => AppLog.Info("拖拽: " + msg);
         var files = BuildVirtualFiles(rows);
         if (files.Count == 0)
         {
@@ -1296,6 +1331,7 @@ public partial class MainWindow : Window
 
         var dataObject = new VirtualFileDataObject(_archive!.Path, files, OnDragProgress);
         dataObject.Finished += OnDragFinished;
+        _activeDrag = dataObject;
 
         BeginDragFeedback(files);
 
@@ -1566,11 +1602,17 @@ public partial class MainWindow : Window
                 UpdateLocationText();
                 return;
             }
-            // A picture inside the archive previews in place - no extraction, no temp
-            // file. Other file types keep their current no-op double-click.
+            // A picture previews in place (no temp file); any other member opens in
+            // its associated program through a throwaway temp copy, like 7-Zip's
+            // in-archive double-click. Text files may also be previewable one day;
+            // for now the grid keeps the picture fast-path and everything else shells out.
             if (PreviewWindow.IsPreviewable(row.EntryPath))
             {
                 OpenPreview(row);
+            }
+            else
+            {
+                OpenEntryExternally(row);
             }
             return;
         }
@@ -1605,6 +1647,131 @@ public partial class MainWindow : Window
             OpenPreview(row);
         }
     }
+
+    /// <summary>Right-click "用关联程序打开": extract the selected member to temp and shell-open it.</summary>
+    private void OnOpenExternallyClick(object sender, RoutedEventArgs e)
+    {
+        if (EntryGrid.SelectedItem is BrowserRow row && !row.IsDirectory)
+        {
+            OpenEntryExternally(row);
+        }
+    }
+
+    // =====================================================================
+    // Open an entry in its associated program. Borrowed from 7-Zip's in-archive
+    // double-click (extract to a throwaway temp folder, shell-open), but
+    // deliberately read-only: writing edited members back into a solid or RAR
+    // archive is far riskier than the feature is worth, so we never re-pack.
+    // =====================================================================
+
+    private readonly List<string> _openTempRoots = new();
+    private const long MaxExternalOpenBytes = 2L * 1024 * 1024 * 1024; // 2 GiB
+
+    /// <summary>
+    /// Double-click a non-picture entry: unpack just that member to temp and let the
+    /// shell open it with the user's associated program. Members over the cap are
+    /// refused with guidance rather than silently filling %TEMP%.
+    /// </summary>
+    private async void OpenEntryExternally(BrowserRow row)
+    {
+        if (_archive is null || _busy || row.IsDirectory) return;
+        if (row.Size > MaxExternalOpenBytes)
+        {
+            ShowMessage("这个文件太大，不适合临时打开",
+                $"「{RelativeName(row.EntryPath)}」有 {BrowserRow.FormatSize(row.Size)}，"
+                + "为免占满临时盘，请改用「解压到…」把它解到你要的位置再打开。");
+            return;
+        }
+
+        SetBusy(true);
+        try
+        {
+            string archivePath = _archive.Path;
+            string relative = RelativeName(row.EntryPath);
+            string? opened = await Task.Run(() => ExtractEntryForOpen(archivePath, row.EntryPath, relative));
+            if (opened is null) return;
+
+            try
+            {
+                Process.Start(new ProcessStartInfo(opened) { UseShellExecute = true });
+                StatusRight.Text = $"已用系统程序打开 {Path.GetFileName(opened)}（临时副本）";
+            }
+            catch (Exception ex)
+            {
+                ShowMessage("没有能打开它的程序",
+                    $"Windows 没找到可打开「{Path.GetFileName(opened)}」的默认程序。\n{ex.Message}");
+            }
+        }
+        finally
+        {
+            SetBusy(false);
+        }
+    }
+
+    /// <summary>
+    /// Extract one member to a fresh temp folder as a real file (so the shell opens it
+    /// by path, not a gigabyte in memory) and return that path. Prompts for a password
+    /// and retries when the archive is encrypted. Null on any failure.
+    /// </summary>
+    private string? ExtractEntryForOpen(string archivePath, string entryPath, string relativeName)
+    {
+        var root = Path.Combine(Path.GetTempPath(), "SliceArc-open-" + Guid.NewGuid().ToString("N"));
+        var target = Path.Combine(root, relativeName.Replace('/', '\\'));
+        string? password = null;
+
+        for (var attempt = 0; attempt < 3; attempt++)
+        {
+            try
+            {
+                Directory.CreateDirectory(Path.GetDirectoryName(target)!);
+                var options = new ExtractionOptions
+                {
+                    OutputDirectory = root,
+                    IncludePaths = new[] { entryPath },
+                    Overwrite = true,
+                    Password = password,
+                    OutputFactory = _ => new FileStream(target, FileMode.Create, FileAccess.Write, FileShare.Read),
+                };
+                using var engine = new ExtractionEngine(archivePath);
+                var result = engine.Extract(options);
+
+                if (result.Ok && File.Exists(target))
+                {
+                    lock (_openTempRoots) _openTempRoots.Add(root);
+                    return target;
+                }
+
+                if (result.NeedsPassword || result.WrongPassword)
+                {
+                    var retry = result.WrongPassword;
+                    password = Dispatcher.Invoke(() =>
+                        PasswordWindow.Prompt(this, Path.GetFileName(archivePath), retry: retry));
+                    if (string.IsNullOrEmpty(password)) { TryDelete(root); return null; }
+                    continue;
+                }
+
+                Dispatcher.Invoke(() =>
+                    ShowMessage("打开失败", result.FailureReason is { Length: > 0 } r ? r : "无法从压缩包提取该文件。"));
+                TryDelete(root);
+                return null;
+            }
+            catch (Exception ex)
+            {
+                Dispatcher.Invoke(() => Report("打开失败", ex));
+                TryDelete(root);
+                return null;
+            }
+        }
+        TryDelete(root);
+        return null;
+    }
+
+    private static void TryDelete(string dir)
+    {
+        try { if (Directory.Exists(dir)) Directory.Delete(dir, recursive: true); } catch { }
+    }
+
+
 
     /// <summary>
     /// Preview a picture that is still inside the archive. The image list is every
@@ -1852,9 +2019,30 @@ public partial class MainWindow : Window
 
     protected override void OnClosing(CancelEventArgs e)
     {
+        // A drop that is still streaming bytes to the target must not be cut short:
+        // the destination file would be left truncated with no error anywhere. This is
+        // 7-Zip's WaitFinish flag in behaviour form; we veto the close and tell the user.
+        if (_activeDrag is { TransferInFlight: true })
+        {
+            e.Cancel = true;
+            StatusRight.Text = "拖拽的文件还在写入目标位置，稍候再关闭窗口";
+            AppLog.Info("关闭被拦下：拖拽传输仍在进行");
+            return;
+        }
+
         _settings.WindowWidth = Width;
         _settings.WindowHeight = Height;
         _settings.Save();
+
+        // "Open externally" temp copies belong to us: the shell opened them by path and
+        // has no idea we created them. Removing them at exit keeps %TEMP% honest; an
+        // already-running external program keeps its open handle either way.
+        lock (_openTempRoots)
+        {
+            foreach (var root in _openTempRoots) TryDelete(root);
+            _openTempRoots.Clear();
+        }
+
         base.OnClosing(e);
     }
 

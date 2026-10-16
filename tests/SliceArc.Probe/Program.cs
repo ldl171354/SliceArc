@@ -571,22 +571,44 @@ var filesBeforeDrag = Directory.GetFiles(work, "*", SearchOption.AllDirectories)
     .OrderBy(p => p, StringComparer.Ordinal).ToArray();
 
 // ---- 9.2 descriptor bytes ----
+// Asserted against an *independent* transcription of ShlObj_core.h _FILEDESCRIPTORW
+// (FileDescriptorWLayout below), with the CLR computing every offset. The previous
+// version hard-coded 584/64/56/60 - the same constants the production code used -
+// so a wrong layout could never fail here. It did not catch the missing 8-byte
+// pointl, which is what made Explorer refuse the drag.
 var descriptor = VirtualFileDataObject.BuildDescriptorBytes(dragFiles);
-Check("9.2 FILEGROUPDESCRIPTORW 长度 = 4 + 584×N",
-    descriptor.Length == 4 + 584 * dragFiles.Count, $"{descriptor.Length} B");
+int fdSize = Marshal.SizeOf(typeof(FileDescriptorWLayout));
+int nameOff = (int)Marshal.OffsetOf(typeof(FileDescriptorWLayout), nameof(FileDescriptorWLayout.cFileName));
+int highOff = (int)Marshal.OffsetOf(typeof(FileDescriptorWLayout), nameof(FileDescriptorWLayout.nFileSizeHigh));
+int lowOff = (int)Marshal.OffsetOf(typeof(FileDescriptorWLayout), nameof(FileDescriptorWLayout.nFileSizeLow));
+int attrOff = (int)Marshal.OffsetOf(typeof(FileDescriptorWLayout), nameof(FileDescriptorWLayout.dwFileAttributes));
+int writeOff = (int)Marshal.OffsetOf(typeof(FileDescriptorWLayout), nameof(FileDescriptorWLayout.ftLastWriteTime));
+
+Check($"9.2 FILEDESCRIPTORW 布局（独立推导 size={fdSize}, name@{nameOff}, size@{highOff}/{lowOff}, attr@{attrOff}, write@{writeOff}）",
+    fdSize == 592 && nameOff == 72 && highOff == 64 && lowOff == 68 && attrOff == 36 && writeOff == 56,
+    $"实测 size={fdSize} name={nameOff} high={highOff} low={lowOff} attr={attrOff} write={writeOff}");
+Check("9.2 FILEGROUPDESCRIPTORW 长度 = 4 + 布局大小×N",
+    descriptor.Length == 4 + fdSize * dragFiles.Count, $"{descriptor.Length} B");
 Check("9.2 cItems 正确", BitConverter.ToInt32(descriptor, 0) == dragFiles.Count);
 
-var firstName = Encoding.Unicode.GetString(descriptor, 4 + 64, 40).TrimEnd('\0');
-var firstSize = BitConverter.ToInt32(descriptor, 4 + 56) * 4294967296L +
-                (uint)BitConverter.ToInt32(descriptor, 4 + 60);
+var firstName = Encoding.Unicode.GetString(descriptor, 4 + nameOff, 40).TrimEnd('\0');
+var firstSize = (long)BitConverter.ToUInt32(descriptor, 4 + highOff) * 4294967296L +
+                BitConverter.ToUInt32(descriptor, 4 + lowOff);
 var firstFlags = BitConverter.ToUInt32(descriptor, 4 + 0);
-var secondName = Encoding.Unicode.GetString(descriptor, 4 + 584 + 64, 40).TrimEnd('\0');
+var secondName = Encoding.Unicode.GetString(descriptor, 4 + fdSize + nameOff, 40).TrimEnd('\0');
 
 Check("9.2 第一个条目名与大小正确",
     firstName == @"src\a.bin" && firstSize == payloadA.Length, $"{firstName} / {firstSize:N0}");
 Check("9.2 dwFlags = ATTRIBUTES|FILESIZE|WRITESTIME",
     (firstFlags & 0x64) == 0x64, $"0x{firstFlags:X}");
 Check("9.2 子目录条目保留相对路径", secondName == @"src\sub\b.bin", secondName);
+
+// The shell reads these three fields itself; assert they land where its header says.
+Check("9.2 大小字段不在旧偏移（56/60）残留",
+    BitConverter.ToUInt32(descriptor, 4 + 56) == 0 || firstSize == payloadA.Length);
+Check("9.2 名字不在旧偏移 64（错位会写到那里）",
+    BitConverter.ToUInt16(descriptor, 4 + 64) == 0,
+    $"64 处字符=U+{BitConverter.ToUInt16(descriptor, 4 + 64):X4}");
 
 // ---- 9.3 COM round trip: IDataObject through its real vtable ----
 var dataObject = new VirtualFileDataObject(dragArchive, dragFiles);
@@ -1357,4 +1379,31 @@ public sealed class ExtractSink : IArchiveExtractCallback
         }
         finally { pv.Clear(); }
     }
+}
+
+/// <summary>
+/// Independent transcription of _FILEDESCRIPTORW from
+/// Windows Kits\10\Include\10.0.26100.0\um\ShlObj_core.h, at the default pack=4, so
+/// the CLR computes the offsets the shell actually uses. Kept separate from
+/// VirtualFileDataObject's own constants on purpose: when the two disagree the 9.2
+/// assertions fail, which is exactly the bug that made Explorer refuse a drag-out.
+/// </summary>
+[StructLayout(LayoutKind.Sequential, Pack = 4, CharSet = CharSet.Unicode)]
+public struct FileDescriptorWLayout
+{
+    public uint dwFlags;                    // 0
+    public Guid clsid;                      // 4
+    public int cx;                          // 20  (SIZEL)
+    public int cy;                          // 24
+    public int pointlX;                     // 28  (POINTL - the field we once dropped)
+    public int pointlY;                     // 32
+    public uint dwFileAttributes;           // 36
+    public long ftCreationTime;             // 40
+    public long ftLastAccessTime;           // 48
+    public long ftLastWriteTime;            // 56
+    public uint nFileSizeHigh;              // 64
+    public uint nFileSizeLow;               // 68
+
+    [MarshalAs(UnmanagedType.ByValTStr, SizeConst = 260)]
+    public string cFileName;                // 72  -> total 592
 }

@@ -208,8 +208,15 @@ internal static class Ole32
     public const uint FILE_ATTRIBUTE_DIRECTORY = 0x00000010;
     public const uint FILE_ATTRIBUTE_NORMAL = 0x00000080;
 
-    /// <summary>Bytes of one FILEDESCRIPTORW, including the 260-char name.</summary>
-    public const int FileDescriptorSize = 584;
+    /// <summary>
+    /// Bytes of one FILEDESCRIPTORW. The shell's copy engine reads cFileName at 72:
+    /// 4 dwFlags + 16 clsid + 8 sizl + 8 pointl + 4 attributes + 24 filetimes
+    /// + 8 filesize = 72, plus 260 WCHARs = 592. The 8-byte pointl between sizl and
+    /// dwFileAttributes is easy to miss - leaving it out makes the entry 584 and
+    /// shifts every later field, so the shell sees an empty name and refuses the
+    /// drop (verified against ShlObj_core.h _FILEDESCRIPTORW).
+    /// </summary>
+    public const int FileDescriptorSize = 592;
 
     /// <summary>Bytes of the FILEGROUPDESCRIPTORW header (the item count).</summary>
     public const int FileGroupDescriptorHeaderSize = 4;

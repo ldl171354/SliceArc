@@ -230,6 +230,15 @@ public sealed record CommandLineOptions
                     break;
                 default:
                     if (!arg.StartsWith('-') && target is null) target = arg;
+                    // A "-" prefixed token that matched no case above is a typo or a
+                    // flag from another tool; swallowing it hands back silently
+                    // different behaviour than asked for (e.g. --recycle-volumes when
+                    // the real flag is --delete-spent), so it is reported instead.
+                    else if (arg.StartsWith('-') && options.ArgumentError is null)
+                        options = options with
+                        {
+                            ArgumentError = $"无法识别的参数「{arg}」。请检查拼写，或用 --help 查看支持的参数。"
+                        };
                     break;
             }
         }

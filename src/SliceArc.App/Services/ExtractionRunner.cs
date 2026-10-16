@@ -61,7 +61,11 @@ public static class ExtractionRunner
 /// <summary>Where a given archive should land, and what the folder is called.</summary>
 public static partial class OutputNaming
 {
-    [GeneratedRegex(@"\.(7z|zip|rar|tar|gz|bz2|xz|zst|lz|lzh|cab|iso|wim|tgz|tbz)$",
+    // "exe" belongs in this list: a self-extracting archive *is* its first volume, and
+    // without it the derived folder keeps the .exe suffix and collides with the archive
+    // file itself - Directory.Create("D:\foo.exe") while D:\foo.exe exists throws
+    // IOException, which is exactly the "无法准备目标文件夹" seen on D:\sed-wgzl.exe.
+    [GeneratedRegex(@"\.(7z|zip|rar|tar|gz|bz2|xz|zst|lz|lzh|cab|iso|wim|tgz|tbz|exe)$",
         RegexOptions.IgnoreCase)]
     private static partial Regex ArchiveExtensionRegex();
 

@@ -23,10 +23,53 @@ public partial class App : Application
     /// </summary>
     private bool _silentFailures;
 
+    /// <summary>
+    /// Delete SliceArc temp folders older than a day. Both the "open externally"
+    /// copies (SliceArc-open-) and the CF_HDROP drag fallback (SliceArc-drag-) are
+    /// normally removed when their window closes; this catches the leftovers from a
+    /// kill or crash so %TEMP% never accumulates them. A day is far longer than any
+    /// real drag/open session, so a live instance's in-flight copy is never touched.
+    /// </summary>
+    private static void SweepStaleTempFolders()
+    {
+        try
+        {
+            var temp = Path.GetTempPath();
+            var cutoff = DateTime.UtcNow.AddDays(-1);
+            foreach (var prefix in new[] { "SliceArc-open-", "SliceArc-drag-" })
+            {
+                foreach (var dir in Directory.GetDirectories(temp, prefix + "*"))
+                {
+                    try
+                    {
+                        if (Directory.GetLastWriteTimeUtc(dir) >= cutoff) continue;
+                        Directory.Delete(dir, recursive: true);
+                    }
+                    catch
+                    {
+                        // A locked leftover just survives to the next launch; a sweep
+                        // must never be able to stop the app from starting.
+                    }
+                }
+            }
+        }
+        catch
+        {
+            // %TEMP% unreadable is not a reason to fail startup.
+        }
+    }
+
     protected override void OnStartup(StartupEventArgs e)
     {
         base.OnStartup(e);
         AppLog.AttachParentConsole();
+
+        // Best-effort sweep of stale temp folders ("open externally" copies and the
+        // CF_HDROP drag fallback). A normal close deletes them, but a killed process
+        // or a crash leaves them behind, and %TEMP% should not silt up over months.
+        // Anything older than a day is safe to drop: a live drag/open session is
+        // measured in minutes, so this never touches another instance's in-flight copy.
+        SweepStaleTempFolders();
 
         var cli = CommandLineOptions.Parse(e.Args);
         _silentFailures = cli.Quiet && cli.Mode != CliMode.Window;
@@ -42,7 +85,7 @@ public partial class App : Application
             if (!cli.Quiet)
             {
                 ResultWindow.Show(null, ResultKind.Error, "命令行参数有误", argError,
-                    null, null, "修正参数后重试。可创建的格式：7z / zip / tar / gz / bz2 / xz / wim。");
+                    null, null, "修正参数后重试。运行 --help 可查看全部支持的参数。");
             }
             Shutdown(2);
             return;
