@@ -86,6 +86,17 @@ public partial class MainWindow : Window
         Width = Math.Clamp(_settings.WindowWidth, MinWidth, Math.Max(MinWidth, work.Width - 40));
         Height = Math.Clamp(_settings.WindowHeight, MinHeight, Math.Max(MinHeight, work.Height - 40));
 
+        // Restore the maximized state the window had when it closed. Without this a
+        // user who resized to a windowed size got a full-screen window again on the
+        // next launch, and every measurement taken "windowed" was really maximized.
+        if (_settings.WindowMaximized) WindowState = WindowState.Maximized;
+
+        // Left in on purpose: "the window opened the wrong size" is otherwise a guess.
+        // One line per launch, and it tells us whether we asked for a windowed size at
+        // all versus the OS overriding it after Show().
+        AppLog.Info($"窗口初始化: settings={_settings.WindowWidth}x{_settings.WindowHeight} " +
+                    $"max={_settings.WindowMaximized} 实际={Width}x{Height} state={WindowState}");
+
         DeleteSpentCheck.IsChecked = _settings.DeleteSpentVolumes;
         KeepLastBox.SelectedIndex = Math.Clamp(_settings.KeepLastVolumes, 0, 3);
 
@@ -102,8 +113,7 @@ public partial class MainWindow : Window
         SyncShellMenuUi();
         SyncThemeUi();
         SyncDefaultCompressUi();
-        UpdateCommands();
-        ShowEmptyHint("把压缩包或文件夹拖进来，或点左上角「打开」");
+        UpdateCommands();        ShowEmptyHint("把压缩包或文件夹拖进来，或点左上角「打开」");
         StatusRight.Text = "就绪";
 
         if (!string.IsNullOrWhiteSpace(initialPath)) Load(initialPath!);
@@ -1600,6 +1610,55 @@ public partial class MainWindow : Window
     // Toolbar / context menu handlers
     // =====================================================================
 
+    /// <summary>
+    /// Collapse toolbar buttons as the window narrows.
+    ///
+    /// Before this, a 960px window (the default size) pushed the filter box and the
+    /// settings button ~244px outside the client area: the left-hand StackPanel never
+    /// yields, so the right-hand group simply got clipped away. The fix is to drop the
+    /// least-used buttons first - 快速解压, then 测试, then 工具 - until the row fits.
+    /// Nothing is lost: every one of them is also in the grid's context menu.
+    /// </summary>
+    private void OnToolbarSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var available = e.NewSize.Width;
+        if (available <= 0) return;
+
+        // This handler runs on the LEFT cell's grid, so `available` is what the buttons
+        // actually have, not the window width - the filter/settings column is already
+        // taken out. Thresholds come from measured button widths (打开+上+刷新+压缩+
+        // 添加+解压到 ≈ 466, plus 快速解压 112, 测试 84, 工具 100, separators 40).
+        QuickExtractButton.Visibility = available >= 700 ? Visibility.Visible : Visibility.Collapsed;
+        TestButton.Visibility = available >= 590 ? Visibility.Visible : Visibility.Collapsed;
+        ToolsButton.Visibility = available >= 490 ? Visibility.Visible : Visibility.Collapsed;
+        Sep3.Visibility = ToolsButton.Visibility;
+        Sep2.Visibility = TestButton.Visibility;
+    }
+
+    /// <summary>
+    /// keep the toolbar aligned with the window's real client area.
+    ///
+    /// On a 125%-scaled desktop WPF lays out in DIPs while Win32 sizing happens in
+    /// physical pixels, so a window dragged to 900px wide can still be laid out at
+    /// 1125 DIP - which pushed the settings button ~200px past the right edge. Reading
+    /// the real size from the window itself and forcing the layout to match keeps the
+    /// two coordinate systems in step.
+    /// </summary>
+    private void OnWindowSizeChanged(object sender, SizeChangedEventArgs e)
+    {
+        var w = e.NewSize.Width;
+        FilterHost.Width = w >= 900 ? 180 : w >= 760 ? 120 : 0;
+        FilterHost.Visibility = w >= 700 ? Visibility.Visible : Visibility.Collapsed;
+    }
+
+    /// <summary>Force the layout size to match the real client area after DPI changes.</summary>
+    protected override void OnDpiChanged(DpiScale oldDpi, DpiScale newDpi)
+    {
+        base.OnDpiChanged(oldDpi, newDpi);
+        AppLog.Info($"DPI 变更: {oldDpi.DpiScaleX:0.##} -> {newDpi.DpiScaleX:0.##}");
+        InvalidateMeasure();
+    }
+
     private void OnOpenClick(object sender, RoutedEventArgs e)
     {
         var dialog = new OpenFileDialog
@@ -2300,8 +2359,15 @@ public partial class MainWindow : Window
             return;
         }
 
-        _settings.WindowWidth = Width;
-        _settings.WindowHeight = Height;
+        // Record the maximized state separately from the size: a maximized window
+        // reports the screen size as Width/Height, and saving those would turn the
+        // user's carefully sized windowed layout into a full-screen one next launch.
+        _settings.WindowMaximized = WindowState == WindowState.Maximized;
+        if (WindowState == WindowState.Normal)
+        {
+            _settings.WindowWidth = Width;
+            _settings.WindowHeight = Height;
+        }
         _settings.Save();
 
         // "Open externally" temp copies belong to us: the shell opened them by path and

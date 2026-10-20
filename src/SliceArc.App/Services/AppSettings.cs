@@ -47,6 +47,9 @@ public sealed class AppSettings
     /// <summary>The release version the user chose「跳过此版本」for; the banner stays quiet for it.</summary>
     public string? SkippedUpdateVersion { get; set; }
 
+    /// <summary>Remember whether the window was maximized when it closed.</summary>
+    public bool WindowMaximized { get; set; }
+
     /// <summary>
     /// Split volume size in bytes remembered from the last compression (0 = no split).
     /// Pre-selecting it means a repeat job needs zero typing.

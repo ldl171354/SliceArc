@@ -10,7 +10,7 @@
     <RootNamespace>SliceArc.App</RootNamespace>
     <AssemblyTitle>极限压缩</AssemblyTitle>
     <Product>极限压缩</Product>
-    <Version>0.4.9</Version>
+    <Version>0.5.0</Version>
 
     <!-- The engine lives in Core, but the CCW/RCW plumbing is switched on per
          process, so the app that hosts it must opt in as well. -->
