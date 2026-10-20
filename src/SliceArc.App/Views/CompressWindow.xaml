@@ -105,8 +105,20 @@
                 <ColumnDefinition Width="*" />
                 <ColumnDefinition Width="*" />
             </Grid.ColumnDefinitions>
-            <TextBox x:Name="VolumeBox" Grid.Column="0" Style="{StaticResource MinimalTextBox}"
-                     ToolTip="留空 = 不分卷。支持 50MB、1GB、1048576 等写法" />
+            <!-- Editable so a custom size still works, but the common sizes are one
+                 click away instead of being typed by hand. -->
+            <ComboBox x:Name="VolumeBox" Grid.Column="0" Height="26" IsEditable="True"
+                      VerticalContentAlignment="Center"
+                      Style="{StaticResource MinimalComboBox}"
+                      ToolTip="留空 = 不分卷。可直接选，也可自己填 50MB、1GB、1048576">
+                <ComboBoxItem Content="不分卷" Tag="0" />
+                <ComboBoxItem Content="10 MB" Tag="10485760" />
+                <ComboBoxItem Content="50 MB" Tag="52428800" />
+                <ComboBoxItem Content="100 MB" Tag="104857600" />
+                <ComboBoxItem Content="500 MB" Tag="524288000" />
+                <ComboBoxItem Content="1 GB" Tag="1073741824" />
+                <ComboBoxItem Content="4 GB" Tag="4294967296" />
+            </ComboBox>
             <TextBox x:Name="MethodBox" Grid.Column="1" Style="{StaticResource MinimalTextBox}"
                      Margin="6,0,0,0"
                      ToolTip="留空 = 默认方法。可填 LZMA2、Deflate、Zstd 等" />

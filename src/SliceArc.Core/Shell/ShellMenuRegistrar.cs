@@ -190,8 +190,8 @@ public static class ShellMenuRegistrar
                     $"{Quote(exe)} --compress --add \"%1\" --format zip", null),
                 Leaf(VerbKey + "21_7z", "极限压缩：压缩到 7z…", icon,
                     $"{Quote(exe)} --compress --add \"%1\" --format 7z", null),
-                Leaf(VerbKey + "22_split", "极限压缩：压缩并分卷…（7z · 50 MB）", icon,
-                    $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 52428800", null),
+                Leaf(VerbKey + "22_split", "极限压缩：压缩并分卷…（打开对话框选择大小）", icon,
+                    $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 0", null),
                 Leaf(VerbKey + "10_open", "用极限压缩打开", icon, $"{Quote(exe)} \"%1\"", null),
             });
 
@@ -206,8 +206,8 @@ public static class ShellMenuRegistrar
                         $"{Quote(exe)} --compress --add \"%1\" --format zip", null),
                     Leaf(VerbKey + "21_7z", "极限压缩：压缩此文件夹到 7z…", icon,
                         $"{Quote(exe)} --compress --add \"%1\" --format 7z", null),
-                    Leaf(VerbKey + "22_split", "极限压缩：压缩此文件夹并分卷…（7z · 50 MB）", icon,
-                        $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 52428800", null),
+                    Leaf(VerbKey + "22_split", "极限压缩：压缩此文件夹并分卷…（打开对话框选择大小）", icon,
+                        $"{Quote(exe)} --compress --add \"%1\" --format 7z --split-volume 0", null),
                     Leaf(VerbKey + "10_open", "用极限压缩打开", icon, $"{Quote(exe)} \"%1\"", null),
                 });
 
@@ -220,8 +220,8 @@ public static class ShellMenuRegistrar
                         $"{Quote(exe)} --compress --add \"%V\" --format zip", null),
                     Leaf(VerbKey + "21_7z", "极限压缩：压缩此文件夹到 7z…", icon,
                         $"{Quote(exe)} --compress --add \"%V\" --format 7z", null),
-                    Leaf(VerbKey + "22_split", "极限压缩：压缩此文件夹并分卷…（7z · 50 MB）", icon,
-                        $"{Quote(exe)} --compress --add \"%V\" --format 7z --split-volume 52428800", null),
+                    Leaf(VerbKey + "22_split", "极限压缩：压缩此文件夹并分卷…（打开对话框选择大小）", icon,
+                        $"{Quote(exe)} --compress --add \"%V\" --format 7z --split-volume 0", null),
                     Leaf(VerbKey + "10_open", "用极限压缩打开此处", icon, $"{Quote(exe)} \"%V\"", null),
                 });
         }

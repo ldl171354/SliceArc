@@ -93,6 +93,13 @@ public sealed record CommandLineOptions
     /// <summary>Split volume size in bytes; 0 = single file.</summary>
     public long VolumeSize { get; init; }
 
+    /// <summary>
+    /// True when --split-volume appeared on the command line, even as 0. The split verbs
+    /// pass 0 to mean "open the dialog with a size preselected", which is different from
+    /// the flag being absent (no split at all).
+    /// </summary>
+    public bool VolumeSizeExplicit { get; init; }
+
     /// <summary>Encrypt 7z headers too (--encrypt-headers).</summary>
     public bool EncryptHeaders { get; init; }
 
@@ -104,6 +111,9 @@ public sealed record CommandLineOptions
 
     /// <summary>True when --format was given explicitly, so it outranks the output extension.</summary>
     public bool FormatExplicit { get; init; }
+
+    /// <summary>True when --level appeared; the pre-filled 5 is not a user choice.</summary>
+    public bool LevelExplicit { get; init; }
 
     /// <summary>
     /// Set when the command line itself is unusable (unknown --format value, a name we
@@ -196,13 +206,15 @@ public sealed record CommandLineOptions
                         options = options with { ArgumentError = fmtErr };
                     break;
                 case "--level":
-                    if (int.TryParse(Next(args, ref i), out var lvl)) options = options with { Level = Math.Clamp(lvl, 0, 9) };
+                    if (int.TryParse(Next(args, ref i), out var lvl))
+                        options = options with { Level = Math.Clamp(lvl, 0, 9), LevelExplicit = true };
                     break;
                 case "--method":
                     options = options with { Method = Next(args, ref i) };
                     break;
                 case "--split-volume":
-                    if (TryParseSize(Next(args, ref i), out var vs2)) options = options with { VolumeSize = Math.Max(0, vs2) };
+                    if (TryParseSize(Next(args, ref i), out var vs2))
+                        options = options with { VolumeSize = Math.Max(0, vs2), VolumeSizeExplicit = true };
                     break;
                 case "--encrypt-headers":
                     options = options with { EncryptHeaders = true };
@@ -383,7 +395,9 @@ public sealed record CommandLineOptions
             _ => 1L,
         };
         bytes = (long)(n * mult);
-        return bytes > 0;
+        // 0 is a meaningful value for --split-volume ("ask me"), so syntax success is
+        // not the same as a positive size; callers decide what zero means.
+        return bytes >= 0;
     }
 
     public static string Usage =>

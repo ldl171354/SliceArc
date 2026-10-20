@@ -522,7 +522,18 @@ public partial class App : Application
             // (format / level / volume size / password) and compression only
             // starts after the user confirms. --quiet keeps the old fire-and-forget
             // behaviour for scripts.
-            var dialog = new CompressWindow(sources, cli.Format, cli.Level, cli.VolumeSize);
+            // The「压缩并分卷」verbs pass --split-volume 0, meaning "ask me": open the
+            // dialog with a split size already selected instead of landing on 不分卷.
+            var requireSplit = cli.VolumeSizeExplicit && cli.VolumeSize == 0;
+            // Only override the remembered defaults when the caller actually named a
+            // format/level; cli.Format is pre-filled with 7z, which is not a user choice
+            // and would otherwise shadow whatever the user set in 设置.
+            var dialog = new CompressWindow(
+                sources,
+                cli.FormatExplicit ? cli.Format : null,
+                cli.LevelExplicit ? cli.Level : null,
+                cli.VolumeSize,
+                requireSplit);
             if (dialog.ShowDialog() != true || dialog.Options is null)
             {
                 AppLog.Info("压缩已在参数对话框取消");

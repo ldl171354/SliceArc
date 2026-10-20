@@ -213,6 +213,57 @@
 
                     <Separator Margin="0,0,0,8" />
 
+                    <TextBlock Text="压缩默认值" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,8" />
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock Text="格式" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="34" />
+                        <ComboBox x:Name="DefaultFormatBox" Width="190" Height="24" FontSize="12"
+                                  Style="{StaticResource MinimalComboBox}" MinHeight="0"
+                                  VerticalContentAlignment="Center" SelectedIndex="0"
+                                  SelectionChanged="OnDefaultCompressChanged"
+                                  ToolTip="新建压缩任务时预选的格式">
+                            <ComboBoxItem Content="7z — LZMA2（默认）" Tag="SevenZip" />
+                            <ComboBoxItem Content="zip — 通用兼容" Tag="Zip" />
+                            <ComboBoxItem Content="tar — 未压缩" Tag="Tar" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock Text="级别" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="34" />
+                        <ComboBox x:Name="DefaultLevelBox" Width="190" Height="24" FontSize="12"
+                                  Style="{StaticResource MinimalComboBox}" MinHeight="0"
+                                  VerticalContentAlignment="Center" SelectedIndex="3"
+                                  SelectionChanged="OnDefaultCompressChanged"
+                                  ToolTip="新建压缩任务时预选的压缩级别">
+                            <ComboBoxItem Content="0 — 存储（不压缩）" Tag="0" />
+                            <ComboBoxItem Content="1 — 最快" Tag="1" />
+                            <ComboBoxItem Content="3 — 快速" Tag="3" />
+                            <ComboBoxItem Content="5 — 标准" Tag="5" />
+                            <ComboBoxItem Content="7 — 最大" Tag="7" />
+                            <ComboBoxItem Content="9 — 极限（最慢）" Tag="9" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <StackPanel Orientation="Horizontal" Margin="0,0,0,6">
+                        <TextBlock Text="分卷" Style="{StaticResource Caption}" VerticalAlignment="Center" Width="34" />
+                        <ComboBox x:Name="DefaultVolumeBox" Width="190" Height="24" FontSize="12"
+                                  IsEditable="True"
+                                  Style="{StaticResource MinimalComboBox}" MinHeight="0"
+                                  VerticalContentAlignment="Center" SelectedIndex="0"
+                                  SelectionChanged="OnDefaultCompressChanged"
+                                  ToolTip="新建压缩任务时预选的分卷大小；也可直接填入 700MB 之类">
+                            <ComboBoxItem Content="不分卷" Tag="0" />
+                            <ComboBoxItem Content="10 MB" Tag="10485760" />
+                            <ComboBoxItem Content="50 MB" Tag="52428800" />
+                            <ComboBoxItem Content="100 MB" Tag="104857600" />
+                            <ComboBoxItem Content="500 MB" Tag="524288000" />
+                            <ComboBoxItem Content="1 GB" Tag="1073741824" />
+                            <ComboBoxItem Content="4 GB" Tag="4294967296" />
+                        </ComboBox>
+                    </StackPanel>
+
+                    <Separator Margin="0,8,0,8" />
+
                     <TextBlock Text="主题" FontWeight="SemiBold" FontSize="12" Margin="0,0,0,6" />
                     <StackPanel Orientation="Horizontal">
                         <Button x:Name="ThemeLight" Style="{StaticResource ToolButton}" Height="26"

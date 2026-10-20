@@ -260,8 +260,11 @@ public sealed class Compress7zCommand : ExplorerCommandBase
 public sealed class CompressSplitCommand : ExplorerCommandBase
 {
     public override Guid CanonicalGuid => CommandGuids.CompressSplit;
-    public override string Title => "压缩并分卷…（7z · 50 MB）";
-    public override string ArgumentsFor(string path) => $"--compress --add {Quote(path)} --format 7z --split-volume 52428800";
+    public override string Title => "压缩并分卷…（可选大小）";
+    // 0 means "no size chosen yet": the dialog opens with the remembered preset and the
+    // user picks 10MB/50MB/500MB/1GB/4GB there. A hardcoded 50MB here would force the
+    // same size on everybody and no way to see the alternatives.
+    public override string ArgumentsFor(string path) => $"--compress --add {Quote(path)} --format 7z --split-volume 0";
 }
 
 // ---------------------------------------------------------------------

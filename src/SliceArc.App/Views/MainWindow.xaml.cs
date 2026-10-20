@@ -101,6 +101,7 @@ public partial class MainWindow : Window
 
         SyncShellMenuUi();
         SyncThemeUi();
+        SyncDefaultCompressUi();
         UpdateCommands();
         ShowEmptyHint("把压缩包或文件夹拖进来，或点左上角「打开」");
         StatusRight.Text = "就绪";
@@ -1891,6 +1892,110 @@ public partial class MainWindow : Window
     private void OnKeepLastChanged(object sender, SelectionChangedEventArgs e)
     {
         _settings.KeepLastVolumes = Math.Max(0, KeepLastBox.SelectedIndex);
+    }
+
+    // =====================================================================
+    // Compression defaults (settings popup)
+    // =====================================================================
+
+    /// <summary>Mirror the saved defaults into the settings controls without re-saving.</summary>
+    private void SyncDefaultCompressUi()
+    {
+        _settingsUiSync = true;
+        try
+        {
+            if (_settings.LastCompressFormat is { Length: > 0 } fmt)
+            {
+                foreach (ComboBoxItem item in DefaultFormatBox.Items)
+                {
+                    if (string.Equals(item.Tag as string, fmt, StringComparison.Ordinal))
+                    {
+                        DefaultFormatBox.SelectedItem = item;
+                        break;
+                    }
+                }
+            }
+            if (_settings.LastCompressLevel is { } lvl)
+                DefaultLevelBox.SelectedIndex = Math.Clamp(lvl switch
+                {
+                    0 => 0, 1 => 1, 2 or 3 => 2, 4 or 5 => 3, 6 or 7 => 4, _ => 5,
+                }, 0, 5);
+
+            var vol = _settings.LastVolumeSize;
+            if (vol > 0)
+            {
+                var matched = false;
+                foreach (ComboBoxItem item in DefaultVolumeBox.Items)
+                {
+                    if (item.Tag is string tag && long.TryParse(tag, out var v) && v == vol)
+                    {
+                        DefaultVolumeBox.SelectedItem = item;
+                        matched = true;
+                        break;
+                    }
+                }
+                if (!matched) DefaultVolumeBox.Text = FormatSizeShort(vol);
+            }
+            else DefaultVolumeBox.SelectedIndex = 0;
+        }
+        finally { _settingsUiSync = false; }
+    }
+
+    private static string FormatSizeShort(long bytes)
+    {
+        string[] units = { "B", "KB", "MB", "GB", "TB" };
+        double v = bytes;
+        var u = 0;
+        while (v >= 1024 && u < units.Length - 1) { v /= 1024; u++; }
+        return (v % 1 == 0 ? ((long)v).ToString() : v.ToString("0.#")) + units[u];
+    }
+
+    private void OnDefaultCompressChanged(object sender, SelectionChangedEventArgs e)
+    {
+        // XAML fills the ComboBox items during InitializeComponent, which raises
+        // SelectionChanged while the other two boxes are still null and the window has
+        // not been loaded. SyncDefaultCompressUi pushes the real state in afterwards.
+        if (_settingsUiSync || !IsLoaded) return;
+        if (DefaultFormatBox is null || DefaultLevelBox is null || DefaultVolumeBox is null) return;
+
+        if (DefaultFormatBox.SelectedItem is ComboBoxItem { Tag: string fmt })
+            _settings.LastCompressFormat = fmt;
+
+        _settings.LastCompressLevel = DefaultLevelBox.SelectedItem is ComboBoxItem { Tag: string lvlTag }
+            && int.TryParse(lvlTag, out var lvl) ? lvl : 5;
+
+        long vol = 0;
+        if (DefaultVolumeBox.SelectedItem is ComboBoxItem { Tag: string volTag })
+            long.TryParse(volTag, out vol);
+        else if (!string.IsNullOrWhiteSpace(DefaultVolumeBox.Text))
+            vol = ParseSizeText(DefaultVolumeBox.Text);
+        _settings.LastVolumeSize = vol;
+        _settings.LastSplitChosen = vol > 0;
+
+        _settings.Save();
+        StatusRight.Text = vol > 0
+            ? $"压缩默认值已保存：{FormatSizeShort(vol)} 分卷"
+            : "压缩默认值已保存：不分卷";
+    }
+
+    /// <summary>"50MB" / "1.5GB" / "1048576" → bytes; 0 when unparseable.</summary>
+    private static long ParseSizeText(string text)
+    {
+        var m = System.Text.RegularExpressions.Regex.Match(
+            text, @"^\s*(\d+(?:\.\d+)?)\s*(KB|MB|GB|TB|B)?\s*$",
+            System.Text.RegularExpressions.RegexOptions.IgnoreCase);
+        if (!m.Success) return 0;
+        if (!double.TryParse(m.Groups[1].Value, System.Globalization.NumberStyles.Float,
+                System.Globalization.CultureInfo.InvariantCulture, out var n)) return 0;
+        var mult = m.Groups[2].Value.ToUpperInvariant() switch
+        {
+            "KB" => 1024L,
+            "MB" => 1024L * 1024,
+            "GB" => 1024L * 1024 * 1024,
+            "TB" => 1024L * 1024 * 1024 * 1024,
+            _ => 1L,
+        };
+        return (long)(n * mult);
     }
 
     // =====================================================================

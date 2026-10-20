@@ -47,6 +47,24 @@ public sealed class AppSettings
     /// <summary>The release version the user chose「跳过此版本」for; the banner stays quiet for it.</summary>
     public string? SkippedUpdateVersion { get; set; }
 
+    /// <summary>
+    /// Split volume size in bytes remembered from the last compression (0 = no split).
+    /// Pre-selecting it means a repeat job needs zero typing.
+    /// </summary>
+    public long LastVolumeSize { get; set; }
+
+    /// <summary>
+    /// True when the user deliberately picked a split size. A plain「压缩」run must not
+    /// inherit a split just because some earlier job used one.
+    /// </summary>
+    public bool LastSplitChosen { get; set; }
+
+    /// <summary>Default compression format id (SevenZip / Zip / ...); null keeps 7z.</summary>
+    public string? LastCompressFormat { get; set; }
+
+    /// <summary>Default compression level 0-9; null keeps the UI default.</summary>
+    public int? LastCompressLevel { get; set; }
+
     public static string FilePath => Path.Combine(AppContext.BaseDirectory, "SliceArc.settings.json");
 
     public static AppSettings Load()

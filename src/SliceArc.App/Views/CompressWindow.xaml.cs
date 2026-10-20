@@ -25,11 +25,17 @@ public partial class CompressWindow : Window
     /// <param name="presetFormat">Right-click verbs pre-select the format they advertise.</param>
     /// <param name="presetLevel">Pre-selected level (0-9); null keeps the UI default.</param>
     /// <param name="presetVolumeSize">Pre-filled split volume size in bytes; 0 = single file.</param>
+    /// <param name="requireSplit">
+    /// The caller is the「压缩并分卷」verb, so a split size must end up selected. When the
+    /// remembered preference says "no split" we still default to 50 MB instead of opening
+    /// on「不分卷」and quietly producing one file.
+    /// </param>
     public CompressWindow(
         IReadOnlyList<string>? initialSources = null,
         CompressionFormat? presetFormat = null,
         int? presetLevel = null,
-        long presetVolumeSize = 0)
+        long presetVolumeSize = 0,
+        bool requireSplit = false)
     {
         InitializeComponent();
         SourceInitialized += (_, _) => WindowTheme.Apply(this);
@@ -66,7 +72,32 @@ public partial class CompressWindow : Window
 
         if (presetLevel is { } lvl) LevelBox.SelectedIndex = IndexFromLevel(lvl);
 
-        if (presetVolumeSize > 0) VolumeBox.Text = FormatVolumeSize(presetVolumeSize);
+        // Everything the previous run chose comes back pre-filled: re-compressing the
+        // same thing with the same split size should need no input at all. Explicit
+        // arguments from the command line still win over the remembered values.
+        var remembered = AppSettings.Load();
+        if (presetFormat is null && remembered.LastCompressFormat is { Length: > 0 } lastFmt)
+        {
+            foreach (ComboBoxItem item in FormatBox.Items)
+            {
+                if (string.Equals(item.Tag as string, lastFmt, StringComparison.Ordinal))
+                {
+                    FormatBox.SelectedItem = item;
+                    break;
+                }
+            }
+        }
+        if (presetLevel is null && remembered.LastCompressLevel is { } lastLevel)
+            LevelBox.SelectedIndex = IndexFromLevel(lastLevel);
+
+        // The split size is remembered only when the user actually asked for a split.
+        // Carrying "500 MB" into a plain「压缩」run would silently produce .001/.002
+        // files where the user expected one archive.
+        if (presetVolumeSize > 0) SelectVolumePreset(presetVolumeSize);
+        else if (requireSplit) SelectVolumePreset(52428800);   // 「分卷」入口默认 50 MB
+        else if (remembered.LastVolumeSize > 0 && remembered.LastSplitChosen)
+            SelectVolumePreset(remembered.LastVolumeSize);
+        else VolumeBox.SelectedIndex = 0;                       // 「不分卷」
 
         if (initialSources is { Count: > 0 })
         {
@@ -97,6 +128,35 @@ public partial class CompressWindow : Window
         while (value >= 1024 && unit < units.Length - 1) { value /= 1024; unit++; }
         var number = value % 1 == 0 ? ((long)value).ToString() : value.ToString("0.#");
         return number + units[unit];
+    }
+
+    /// <summary>
+    /// Pre-select the matching preset, or fall back to writing the formatted size into
+    /// the editable box. Keeping the preset selected (rather than just its text) means
+    /// the drop-down visibly reflects the choice instead of showing a bare number.
+    /// </summary>
+    private void SelectVolumePreset(long bytes)
+    {
+        foreach (ComboBoxItem item in VolumeBox.Items)
+        {
+            if (item.Tag is string tag && long.TryParse(tag, out var preset) && preset == bytes)
+            {
+                VolumeBox.SelectedItem = item;
+                return;
+            }
+        }
+        VolumeBox.Text = FormatVolumeSize(bytes);
+    }
+
+    /// <summary>
+    /// The chosen volume size. Reads the preset's byte value when an item is selected,
+    /// otherwise parses whatever was typed (accepts "50MB" and a bare byte count).
+    /// </summary>
+    private long ReadVolumeSize()
+    {
+        if (VolumeBox.SelectedItem is ComboBoxItem { Tag: string tag } && long.TryParse(tag, out var preset))
+            return preset;
+        return ParseVolumeSize(VolumeBox.Text);
     }
 
     // -----------------------------------------------------------------
@@ -254,11 +314,27 @@ public partial class CompressWindow : Window
             Format = CurrentFormat(),
             Level = LevelFromIndex(LevelBox.SelectedIndex),
             Method = string.IsNullOrWhiteSpace(MethodBox.Text) ? null : MethodBox.Text.Trim(),
-            VolumeSize = ParseVolumeSize(VolumeBox.Text),
+            VolumeSize = ReadVolumeSize(),
             Password = string.IsNullOrEmpty(PasswordBox.Password) ? null : PasswordBox.Password,
             EncryptHeaders = EncryptHeadersCheck.IsChecked == true,
             Solid = SolidCheck.IsChecked == true,
         };
+
+        // Remember the choices so the next run is one click away: a repeat job with the
+        // same volume size should not have to re-pick anything.
+        try
+        {
+            var settings = AppSettings.Load();
+            settings.LastVolumeSize = Options.VolumeSize;
+            settings.LastSplitChosen = Options.VolumeSize > 0;
+            settings.LastCompressFormat = Options.Format.ToString();
+            settings.LastCompressLevel = Options.Level;
+            settings.Save();
+        }
+        catch (Exception ex)
+        {
+            AppLog.Info($"记住压缩偏好失败（不影响压缩）: {ex.Message}");
+        }
 
         DialogResult = true;
         Close();
