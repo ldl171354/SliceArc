@@ -393,10 +393,22 @@
             </DataGrid>
 
             <!-- thumbnail view: same rows, picture-first layout -->
-            <ScrollViewer x:Name="ThumbPanel" Grid.Row="2" VerticalScrollBarVisibility="Auto"
-                          Background="{DynamicResource B.Surface}" Visibility="Collapsed">
-                <WrapPanel x:Name="ThumbWrap" Margin="10" />
-            </ScrollViewer>
+            <Grid Grid.Row="2">
+                <ScrollViewer x:Name="ThumbPanel" VerticalScrollBarVisibility="Auto"
+                              Background="{DynamicResource B.Surface}" Visibility="Collapsed"
+                              PreviewMouseLeftButtonDown="OnThumbPanelMouseDown"
+                              PreviewMouseMove="OnThumbPanelMouseMove"
+                              PreviewMouseLeftButtonUp="OnThumbPanelMouseUp">
+                    <WrapPanel x:Name="ThumbWrap" Margin="10" />
+                </ScrollViewer>
+                <!-- Rubber-band selection overlay: drawn above the cards so a drag across
+                     empty space selects everything it touches, the way Explorer does. -->
+                <Canvas x:Name="ThumbSelectLayer" IsHitTestVisible="False" Visibility="Collapsed">
+                    <Rectangle x:Name="ThumbSelectRect" Visibility="Collapsed"
+                               Fill="{DynamicResource B.AccentSoft}" Opacity="0.5"
+                               Stroke="{DynamicResource B.Accent}" StrokeThickness="1" />
+                </Canvas>
+            </Grid>
 
             <StackPanel x:Name="EmptyHint" Grid.Row="2" VerticalAlignment="Center" HorizontalAlignment="Center"
                         IsHitTestVisible="False" Visibility="Collapsed">

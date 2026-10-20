@@ -378,9 +378,17 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
         try
         {
             Directory.CreateDirectory(root);
-            for (var i = 0; i < _files.Count; i++)
+
+            // Directory entries first, so an empty folder still materialises and the
+            // hierarchy exists before files are written into it.
+            foreach (var dir in _files.Where(f => f.IsDirectory))
             {
-                var file = _files[i];
+                var dirPath = Path.Combine(root, dir.RelativeName.Replace('/', '\\'));
+                Directory.CreateDirectory(dirPath);
+            }
+
+            foreach (var file in _files.Where(f => !f.IsDirectory))
+            {
                 var target = Path.Combine(root, file.RelativeName.Replace('/', '\\'));
                 Directory.CreateDirectory(Path.GetDirectoryName(target)!);
 
@@ -395,7 +403,23 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
                         fs.Write(buffer, 0, n);
                     }
                 }
-                paths.Add(target);
+            }
+
+            // Hand the shell the TOP-LEVEL items, not every leaf. A folder dropped as a
+            // folder makes Explorer create that folder and recurse into it; handing over
+            // the leaves alone reproduces the files but drops the folder level, which is
+            // the "拖文件夹只解出里面的东西" symptom.
+            var tops = _files
+                .Select(f => f.RelativeName.Replace('/', '\\').TrimEnd('\\'))
+                .Where(n => n.Length > 0)
+                .Distinct(StringComparer.OrdinalIgnoreCase)
+                .Where(n => !n.Contains('\\'))
+                .ToList();
+
+            foreach (var top in tops)
+            {
+                var full = Path.Combine(root, top);
+                if (Directory.Exists(full) || File.Exists(full)) paths.Add(full);
             }
         }
         catch (Exception ex)

@@ -291,7 +291,130 @@ public partial class MainWindow : Window
     {
         EntryGrid.Visibility = _thumbMode ? Visibility.Collapsed : Visibility.Visible;
         ThumbPanel.Visibility = _thumbMode ? Visibility.Visible : Visibility.Collapsed;
+        ThumbSelectLayer.Visibility = _thumbMode ? Visibility.Visible : Visibility.Collapsed;
         if (_thumbMode) RefreshThumbnails();
+    }
+
+    // =====================================================================
+    // Rubber-band selection for the thumbnail view
+    //
+    // Clicking cards one by one (or Ctrl-clicking) is fine for two files and painful
+    // for thirty. Dragging across the empty canvas draws a rectangle and selects every
+    // card it touches, matching Explorer. Card click handlers still win: the band only
+    // starts when the press lands outside any card.
+    // =====================================================================
+
+    private bool _bandSelecting;
+    private Point _bandStart;
+    private HashSet<BrowserRow> _bandBase = new();
+
+    private void OnThumbPanelMouseDown(object sender, MouseButtonEventArgs e)
+    {
+        if (!_thumbMode || _busy) return;
+
+        // A press on a card is a card click / drag-out, not a band.
+        if (FindThumbCard(e.OriginalSource as DependencyObject) is not null) return;
+        if (e.OriginalSource is ScrollBar) return;
+
+        _bandSelecting = true;
+        _bandStart = e.GetPosition(ThumbSelectLayer);
+
+        // Ctrl/Shift keeps the existing selection as a base, plain drag starts fresh.
+        var additive = (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0;
+        _bandBase = additive ? new HashSet<BrowserRow>(_thumbSelection) : new HashSet<BrowserRow>();
+        if (!additive) ClearThumbSelection();
+
+        ThumbSelectRect.Visibility = Visibility.Visible;
+        Canvas.SetLeft(ThumbSelectRect, _bandStart.X);
+        Canvas.SetTop(ThumbSelectRect, _bandStart.Y);
+        ThumbSelectRect.Width = 0;
+        ThumbSelectRect.Height = 0;
+        ThumbPanel.CaptureMouse();
+        e.Handled = true;
+    }
+
+    private void OnThumbPanelMouseMove(object sender, MouseEventArgs e)
+    {
+        if (!_bandSelecting) return;
+        if (e.LeftButton != MouseButtonState.Pressed) { EndBandSelection(); return; }
+
+        var p = e.GetPosition(ThumbSelectLayer);
+        var x = Math.Min(p.X, _bandStart.X);
+        var y = Math.Min(p.Y, _bandStart.Y);
+        var w = Math.Abs(p.X - _bandStart.X);
+        var h = Math.Abs(p.Y - _bandStart.Y);
+
+        Canvas.SetLeft(ThumbSelectRect, x);
+        Canvas.SetTop(ThumbSelectRect, y);
+        ThumbSelectRect.Width = w;
+        ThumbSelectRect.Height = h;
+
+        var band = new Rect(x, y, w, h);
+        foreach (var card in ThumbWrap.Children.OfType<Border>())
+        {
+            if (card.Tag is not BrowserRow row) continue;
+            var origin = card.TranslatePoint(new Point(0, 0), ThumbSelectLayer);
+            var box = new Rect(origin.X, origin.Y, card.ActualWidth, card.ActualHeight);
+            var hit = band.IntersectsWith(box);
+
+            if (hit || _bandBase.Contains(row)) SetThumbSelected(card, row, true);
+            else SetThumbSelected(card, row, false);
+        }
+        e.Handled = true;
+    }
+
+    private void OnThumbPanelMouseUp(object sender, MouseButtonEventArgs e)
+    {
+        if (!_bandSelecting) return;
+        EndBandSelection();
+        e.Handled = true;
+    }
+
+    private void EndBandSelection()
+    {
+        _bandSelecting = false;
+        ThumbSelectRect.Visibility = Visibility.Collapsed;
+        if (ThumbPanel.IsMouseCaptured) ThumbPanel.ReleaseMouseCapture();
+        UpdateCounts();
+    }
+
+    private void SetThumbSelected(Border card, BrowserRow row, bool selected)
+    {
+        if (selected)
+        {
+            _thumbSelection.Add(row);
+            card.BorderBrush = (Brush)FindResource("B.Accent");
+            card.BorderThickness = new Thickness(2);
+        }
+        else
+        {
+            _thumbSelection.Remove(row);
+            card.BorderBrush = (Brush)FindResource("B.Border");
+            card.BorderThickness = new Thickness(1);
+        }
+    }
+
+    private void ClearThumbSelection()
+    {
+        foreach (var card in ThumbWrap.Children.OfType<Border>())
+        {
+            if (card.Tag is BrowserRow row) SetThumbSelected(card, row, false);
+        }
+        _thumbSelection.Clear();
+    }
+
+    /// <summary>Walk up from a hit-test source to the card Border that owns it.</summary>
+    private Border? FindThumbCard(DependencyObject? source)
+    {
+        while (source is not null and not WrapPanel)
+        {
+            if (source is Border { Tag: BrowserRow } border && ThumbWrap.Children.Contains(border))
+                return border;
+            source = source is Visual or System.Windows.Media.Media3D.Visual3D
+                ? VisualTreeHelper.GetParent(source)
+                : LogicalTreeHelper.GetParent(source);
+        }
+        return null;
     }
 
     /// <summary>Rebuild the thumbnail cards from the current row set.</summary>
@@ -377,19 +500,20 @@ public partial class MainWindow : Window
                 else { OpenEntryExternally(row); }
                 return;
             }
-            // single click toggles selection so 解压选中项 keeps working
+            // single click toggles selection so 解压选中项 keeps working.
+            // Ctrl/Shift keeps the rest selected; a plain click clears first so the
+            // result matches what the grid does.
+            var additive = (Keyboard.Modifiers & (ModifierKeys.Control | ModifierKeys.Shift)) != 0;
             if (_thumbSelection.Contains(row))
             {
-                _thumbSelection.Remove(row);
-                border.BorderBrush = (Brush)FindResource("B.Border");
-                border.BorderThickness = new Thickness(1);
+                SetThumbSelected(border, row, false);
             }
             else
             {
-                _thumbSelection.Add(row);
-                border.BorderBrush = (Brush)FindResource("B.Accent");
-                border.BorderThickness = new Thickness(2);
+                if (!additive) ClearThumbSelection();
+                SetThumbSelected(border, row, true);
             }
+            UpdateCounts();
         };
 
         // Drag-out from a thumbnail card: same pipeline as the grid (archive entries
@@ -682,7 +806,8 @@ public partial class MainWindow : Window
 
     private void UpdateCounts()
     {
-        var selected = EntryGrid.SelectedItems.Count;
+        // In thumbnail mode the grid's selection is stale; the cards own the selection.
+        var selected = _thumbMode ? _thumbSelection.Count : EntryGrid.SelectedItems.Count;
         var bytes = _rows.Where(r => !r.IsDirectory).Sum(r => r.Size);
 
         var parts = new List<string> { $"{_rows.Count} 项" };
@@ -888,7 +1013,7 @@ public partial class MainWindow : Window
         var result = new List<string>();
         if (_archive is null) return result;
 
-        foreach (var item in EntryGrid.SelectedItems)
+        foreach (var item in CurrentSelectedRows())
         {
             if (item is not BrowserRow row) continue;
 
@@ -939,9 +1064,16 @@ public partial class MainWindow : Window
         _ = RunCompressionAsync(dialog.Options);
     }
 
+    /// <summary>
+    /// The rows the user considers selected, whichever view is showing. In thumbnail
+    /// mode the grid keeps a stale selection, so the cards' set is authoritative.
+    /// </summary>
+    private List<BrowserRow> CurrentSelectedRows() =>
+        _thumbMode ? _thumbSelection.ToList() : EntryGrid.SelectedItems.Cast<BrowserRow>().ToList();
+
     private List<string> CollectCompressionSources()
     {
-        var selected = EntryGrid.SelectedItems.Cast<BrowserRow>().ToList();
+        var selected = CurrentSelectedRows();
         var paths = new List<string>();
 
         foreach (var row in selected)
@@ -1400,15 +1532,25 @@ public partial class MainWindow : Window
             }
 
             var prefix = row.EntryPath.TrimEnd('/') + "/";
+            var top = RelativeName(row.EntryPath.TrimEnd('/'));
+            var any = false;
             foreach (var entry in archive.Entries)
             {
                 if (entry.IsDirectory) continue;
                 if (!entry.NormalizedPath.StartsWith(prefix, StringComparison.OrdinalIgnoreCase)) continue;
+                any = true;
 
                 var name = RelativeName(entry.NormalizedPath);
                 if (seen.Add(name))
                     files.Add(new VirtualFileEntry(name, entry.NormalizedPath, entry.Size, entry.Modified));
             }
+
+            // The folder itself has to be part of the payload, otherwise a drop
+            // reconstructs only the files it contained and the folder level is lost.
+            // Explorer creates the tree when the HDROP names the folder rather than
+            // every leaf inside it.
+            if (any && seen.Add(top))
+                files.Add(new VirtualFileEntry(top, row.EntryPath.TrimEnd('/'), 0, null) { IsDirectory = true });
         }
 
         return files;
