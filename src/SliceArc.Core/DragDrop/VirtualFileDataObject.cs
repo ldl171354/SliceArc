@@ -39,6 +39,12 @@ public sealed record VirtualFileEntry(
 [ClassInterface(ClassInterfaceType.None)]
 public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
 {
+    /// <summary>
+    /// The BCL-flavoured view of this object, so in-process consumers can use the
+    /// same object through System.Runtime.InteropServices.ComTypes.IDataObject.
+    /// </summary>
+    public System.Runtime.InteropServices.ComTypes.IDataObject AsBclDataObject() => new BclDataObject(this);
+
     private readonly string _archivePath;
     private readonly IReadOnlyList<VirtualFileEntry> _files;
     private readonly Action<EntryStreamProgress>? _progress;
@@ -288,14 +294,11 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
             // answering DV_E_LINDEX makes the shell treat the whole object as broken.
             return format.lindex >= 0 && format.lindex < _files.Count ? Ole32.S_OK : Ole32.DV_E_LINDEX;
 
-        // CF_HDROP is deliberately NOT advertised here (and stays out of
-        // EnumFormatEtc): probing targets that see it switch to copying from the real
-        // temp paths instead of the streams, and the release timer would reclaim that
-        // folder while the copy is still reading it - effect=1, zero bytes on disk.
-        // A target that asks for CF_HDROP *directly* via GetData still gets the
-        // temp-extracted list (that is the compat lane for paths-only apps).
-        if (format.cfFormat == CF_HDROP)
-            return Ole32.DV_E_FORMATETC;
+        // CF_HDROP is advertised on purpose: it is the one shape Explorer, Desktop,
+        // Sticky Notes and every upload picker handle the same way, and its copy runs
+        // inside the drop instead of racing the release timer afterwards.
+        if (format.cfFormat == CF_HDROP && (tymed & Ole32.TYMED_HGLOBAL) != 0)
+            return Ole32.S_OK;
 
         return Ole32.DV_E_FORMATETC;
     }
@@ -319,6 +322,35 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
         var x when x == CF_HDROP => "CF_HDROP",
         _ => $"cf#{cf}",
     };
+
+    /// <summary>
+    /// Materialise every dragged entry into a temp folder ahead of the OLE drag loop.
+    ///
+    /// This is the shape 7-Zip, WinRAR and Bandizip all use, and the reason is not
+    /// laziness: a CF_HDROP copy is performed by the *target* from real paths, so the
+    /// files must already exist when the drop happens. Extracting lazily inside
+    /// GetData blocks the drag loop on a multi-gigabyte decode with no progress and no
+    /// way to cancel. Doing it up front keeps the UI responsive and lets us report
+    /// per-entry progress.
+    ///
+    /// Returns the temp root (already populated) or null when the payload is too large
+    /// or extraction failed; callers then fall back or report.
+    /// </summary>
+    public string? PrepareForDrag()
+    {
+        if (TotalBytes > MaxFallbackBytes)
+        {
+            ProbeLog?.Invoke($"预解压放弃：{TotalBytes} 字节超过 {MaxFallbackBytes} 上限");
+            return null;
+        }
+
+        if (EnsureTempExtracted() is { } paths)
+        {
+            ProbeLog?.Invoke($"预解压完成：{paths.Count} 项，根目录 {_hdropRoot}");
+            return _hdropRoot;
+        }
+        return null;
+    }
 
     /// <summary>
     /// Extract the dragged items into a throwaway temp folder once, and remember it.
@@ -425,6 +457,111 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
     {
         formatOut = formatIn;
         return Ole32.E_NOTIMPL;
+    }
+
+    /// <summary>
+    /// The BCL view of this data object, for in-process consumers.
+    ///
+    /// The shell talks to us through the OLE COM interface, but an in-process
+    /// consumer (WPF's own drop path, or a test host) gets the *managed* object back
+    /// from Marshal.GetObjectForIUnknown and then casts it to
+    /// <see cref="System.Runtime.InteropServices.ComTypes.IDataObject"/>. Without
+    /// that interface the cast throws InvalidCastException and the drop looks like it
+    /// delivered nothing - AGENTS 7.16 records this exact trap. A separate adapter
+    /// keeps the two FORMATETC struct types from colliding in one class.
+    /// </summary>
+    internal sealed class BclDataObject : System.Runtime.InteropServices.ComTypes.IDataObject
+    {
+        private readonly VirtualFileDataObject _owner;
+        public BclDataObject(VirtualFileDataObject owner) => _owner = owner;
+
+        void System.Runtime.InteropServices.ComTypes.IDataObject.GetData(
+            ref System.Runtime.InteropServices.ComTypes.FORMATETC format,
+            out System.Runtime.InteropServices.ComTypes.STGMEDIUM medium)
+        {
+            var f = ToOle(format);
+            var hr = _owner.GetDataInner(ref f, out var m);
+            if (hr != Ole32.S_OK) Marshal.ThrowExceptionForHR(hr);
+            medium = new System.Runtime.InteropServices.ComTypes.STGMEDIUM
+            {
+                tymed = (System.Runtime.InteropServices.ComTypes.TYMED)m.tymed,
+                unionmember = m.unionmember,
+                pUnkForRelease = m.pUnkForRelease,
+            };
+        }
+
+        void System.Runtime.InteropServices.ComTypes.IDataObject.GetDataHere(
+            ref System.Runtime.InteropServices.ComTypes.FORMATETC format,
+            ref System.Runtime.InteropServices.ComTypes.STGMEDIUM medium)
+        {
+            var f = ToOle(format);
+            var m = ToOle(medium);
+            Marshal.ThrowExceptionForHR(_owner.GetDataHere(ref f, ref m));
+        }
+
+        int System.Runtime.InteropServices.ComTypes.IDataObject.QueryGetData(
+            ref System.Runtime.InteropServices.ComTypes.FORMATETC format)
+        {
+            var f = ToOle(format);
+            return _owner.AnswerQuery(ref f);
+        }
+
+        int System.Runtime.InteropServices.ComTypes.IDataObject.DAdvise(
+            ref System.Runtime.InteropServices.ComTypes.FORMATETC format,
+            System.Runtime.InteropServices.ComTypes.ADVF advf,
+            System.Runtime.InteropServices.ComTypes.IAdviseSink advSink, out int connection)
+        {
+            connection = 0;
+            return Ole32.OLE_E_ADVISENOTSUPPORTED;
+        }
+
+        void System.Runtime.InteropServices.ComTypes.IDataObject.DUnadvise(int connection)
+            => Marshal.ThrowExceptionForHR(Ole32.OLE_E_ADVISENOTSUPPORTED);
+
+        int System.Runtime.InteropServices.ComTypes.IDataObject.EnumDAdvise(
+            out System.Runtime.InteropServices.ComTypes.IEnumSTATDATA enumAdvise)
+        {
+            enumAdvise = null;
+            return Ole32.OLE_E_ADVISENOTSUPPORTED;
+        }
+
+        void System.Runtime.InteropServices.ComTypes.IDataObject.SetData(
+            ref System.Runtime.InteropServices.ComTypes.FORMATETC format,
+            ref System.Runtime.InteropServices.ComTypes.STGMEDIUM medium, bool release)
+            => Marshal.ThrowExceptionForHR(Ole32.E_NOTIMPL);
+
+        int System.Runtime.InteropServices.ComTypes.IDataObject.GetCanonicalFormatEtc(
+            ref System.Runtime.InteropServices.ComTypes.FORMATETC formatIn,
+            out System.Runtime.InteropServices.ComTypes.FORMATETC formatOut)
+        {
+            formatOut = formatIn;
+            return Ole32.E_NOTIMPL;
+        }
+
+        System.Runtime.InteropServices.ComTypes.IEnumFORMATETC
+            System.Runtime.InteropServices.ComTypes.IDataObject.EnumFormatEtc(
+                System.Runtime.InteropServices.ComTypes.DATADIR direction)
+            => new BclFormatEnumerator(Formats.Enumerate());
+
+        private static FORMATETC ToOle(System.Runtime.InteropServices.ComTypes.FORMATETC f) => new()
+        {
+            cfFormat = (ushort)f.cfFormat,
+            ptd = f.ptd,
+            dwAspect = (uint)f.dwAspect,
+            lindex = f.lindex,
+            tymed = (uint)f.tymed,
+        };
+
+        private static STGMEDIUM ToOle(System.Runtime.InteropServices.ComTypes.STGMEDIUM m) => new()
+        {
+            tymed = (uint)m.tymed,
+            unionmember = m.unionmember,
+            // BCL holds the release sink as object; the OLE struct wants the raw
+            // interface pointer (null when nobody owns it).
+            pUnkForRelease = m.pUnkForRelease is null
+                ? IntPtr.Zero
+                : Marshal.GetIUnknownForObject(m.pUnkForRelease),
+        };
     }
 
     public int SetData(ref FORMATETC format, ref STGMEDIUM medium, bool release) => Ole32.E_NOTIMPL;
@@ -540,9 +677,15 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
                     // DoDragDrop returned (its copy runs on its own thread). While the
                     // readers list is still empty we cannot conclude "idle" - the
                     // earlier behaviour disposed instantly and Explorer's late pull got
-                    // STG_E_READFAULT: effect=1, zero-byte result. Wait for either a
-                    // finished stream or the deadline instead.
-                    idle = cancelled || (_streamsRequested && _readers.Count > 0 && _readers.All(reader => reader.IsFinished));
+                    // STG_E_READFAULT: effect=1, zero-byte result.
+                    //
+                    // With CF_HDROP as the primary shape there is no stream to watch:
+                    // Explorer copies from the temp folder on its own schedule, so the
+                    // temp folder must survive until the deadline regardless. Never
+                    // report idle in that mode.
+                    var streamIdle = _streamsRequested && _readers.Count > 0 &&
+                                     _readers.All(reader => reader.IsFinished);
+                    idle = cancelled || (streamIdle && !_usedTempFallback);
                 }
 
                 if (idle || DateTime.UtcNow >= deadline) Dispose();
@@ -588,12 +731,71 @@ public sealed class VirtualFileDataObject : IOleDataObject, IDisposable
         public static readonly ushort Contents = (ushort)Ole32.RegisterClipboardFormat("FileContents");
         public static readonly ushort PreferredEffect = (ushort)Ole32.RegisterClipboardFormat("Preferred DropEffect");
 
+        /// <summary>
+        /// What the drop target is offered, in priority order.
+        ///
+        /// CF_HDROP leads because that is the only shape every Windows drop target
+        /// really honours: 7-Zip, WinRAR and Bandizip all hand the shell a plain file
+        /// list and let it copy from real paths. Advertising the virtual
+        /// FileContents/IStream shape first made Explorer accept the drop (effect=1)
+        /// and then produce nothing on disk, because its copy engine reads those
+        /// streams after DoDragDrop has already returned and the decoders were gone.
+        /// The virtual shape is still answered when a target asks for it directly.
+        /// </summary>
         public static FORMATETC[] Enumerate() => new[]
         {
+            new FORMATETC { cfFormat = CF_HDROP, dwAspect = Ole32.DVASPECT_CONTENT, lindex = -1, tymed = Ole32.TYMED_HGLOBAL },
             new FORMATETC { cfFormat = Descriptor, dwAspect = Ole32.DVASPECT_CONTENT, lindex = -1, tymed = Ole32.TYMED_HGLOBAL },
             new FORMATETC { cfFormat = Contents, dwAspect = Ole32.DVASPECT_CONTENT, lindex = -1, tymed = Ole32.TYMED_ISTREAM },
             new FORMATETC { cfFormat = PreferredEffect, dwAspect = Ole32.DVASPECT_CONTENT, lindex = -1, tymed = Ole32.TYMED_HGLOBAL },
         };
+    }
+
+    /// <summary>
+    /// The BCL flavour of the same format list, for in-process consumers that cast
+    /// the object to <see cref="System.Runtime.InteropServices.ComTypes.IDataObject"/>
+    /// instead of going through the OLE vtable.
+    /// </summary>
+    private sealed class BclFormatEnumerator : System.Runtime.InteropServices.ComTypes.IEnumFORMATETC
+    {
+        private readonly FORMATETC[] _formats;
+        private int _index;
+
+        public BclFormatEnumerator(FORMATETC[] formats) => _formats = formats;
+
+        public int Next(int celt, System.Runtime.InteropServices.ComTypes.FORMATETC[] rgelt, int[] pceltFetched)
+        {
+            var n = 0;
+            while (n < celt && _index < _formats.Length)
+            {
+                var f = _formats[_index++];
+                rgelt[n++] = new System.Runtime.InteropServices.ComTypes.FORMATETC
+                {
+                    cfFormat = (short)f.cfFormat,
+                    dwAspect = (System.Runtime.InteropServices.ComTypes.DVASPECT)f.dwAspect,
+                    lindex = f.lindex,
+                    tymed = (System.Runtime.InteropServices.ComTypes.TYMED)f.tymed,
+                    ptd = f.ptd,
+                };
+            }
+            if (pceltFetched is { Length: > 0 }) pceltFetched[0] = n;
+            return n == celt ? 0 : 1; // S_OK / S_FALSE
+        }
+
+        public int Skip(int celt)
+        {
+            _index = Math.Min(_index + celt, _formats.Length);
+            return _index < _formats.Length ? 0 : 1;
+        }
+
+        public int Reset()
+        {
+            _index = 0;
+            return 0;
+        }
+
+        public void Clone(out System.Runtime.InteropServices.ComTypes.IEnumFORMATETC newEnum)
+            => newEnum = new BclFormatEnumerator(_formats) { _index = _index };
     }
 }
 

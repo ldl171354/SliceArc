@@ -1316,7 +1316,7 @@ public partial class MainWindow : Window
             : $"已拖出 {paths.Length} 项";
     }
 
-    private void DragArchiveEntriesOut(IReadOnlyList<BrowserRow> rows)
+    private async void DragArchiveEntriesOut(IReadOnlyList<BrowserRow> rows)
     {
         // A drag that produces no file is otherwise invisible in the log; route the
         // OLE result there so the failure can be diagnosed after the fact.
@@ -1332,27 +1332,48 @@ public partial class MainWindow : Window
         var dataObject = new VirtualFileDataObject(_archive!.Path, files, OnDragProgress);
         dataObject.Finished += OnDragFinished;
         _activeDrag = dataObject;
-
+        SetBusy(true);
         BeginDragFeedback(files);
 
-        var effect = DragOut.DoDragDrop(dataObject);
-        CancelButton.IsEnabled = true;
-
-        if (effect == 0)
+        // Materialise to temp BEFORE entering the OLE loop. The drop target copies
+        // from real paths, and decoding a big member inside GetData would freeze the
+        // drag with no progress. 7-Zip/Bandizip/WinRAR all pay this cost up front.
+        string? tempRoot = await Task.Run(() => dataObject.PrepareForDrag());
+        if (tempRoot is null)
         {
-            // Nothing was accepted, so tear the decodes down right away.
             dataObject.Dispose();
+            SetBusy(false);
             ProgressPanel.Visibility = Visibility.Collapsed;
-            StatusRight.Text = "拖拽已取消";
+            ShowMessage("这个选择太大，无法临时拖出",
+                $"共 {BrowserRow.FormatSize(dataObject.TotalBytes)}。拖拽需要先把内容解压到临时目录，"
+                + "为免占满系统盘，请改用「解压到…」直接写到目标位置。");
+            StatusRight.Text = "拖拽已取消（体积过大）";
             return;
         }
 
-        // The object outlives this call on purpose: after a successful drop the
-        // shell keeps pulling bytes while it writes the destination files, and
-        // it releases itself once the last decode is done.
-        dataObject.MarkDragFinished(cancelled: false);
-        StatusRight.Text =
-            $"已拖出 {files.Count} 个文件（{BrowserRow.FormatSize(dataObject.TotalBytes)}），正在写入目标位置…";
+        try
+        {
+            var effect = DragOut.DoDragDrop(dataObject);
+            CancelButton.IsEnabled = true;
+
+            if (effect == 0)
+            {
+                dataObject.Dispose();
+                ProgressPanel.Visibility = Visibility.Collapsed;
+                StatusRight.Text = "拖拽已取消";
+                return;
+            }
+
+            // The temp folder must outlive this call: the target copies from it on its
+            // own schedule. The release timer owns the cleanup, with a hard deadline.
+            dataObject.MarkDragFinished(cancelled: false);
+            StatusRight.Text =
+                $"已拖出 {files.Count} 个文件（{BrowserRow.FormatSize(dataObject.TotalBytes)}），正在写入目标位置…";
+        }
+        finally
+        {
+            SetBusy(false);
+        }
     }
 
     /// <summary>
@@ -1409,15 +1430,16 @@ public partial class MainWindow : Window
             ProgressBar.Value = progress.Fraction;
             ProgressPercent.Text = $"{progress.Fraction * 100:0}%";
             ProgressDetail.Text =
-                $"拖出 {Path.GetFileName(progress.EntryPath)} · " +
-                $"{BrowserRow.FormatSize(progress.BytesRead)}/{BrowserRow.FormatSize(progress.TotalBytes)} · 零临时文件";
+                $"正在解压 {Path.GetFileName(progress.EntryPath)} · " +
+                $"{BrowserRow.FormatSize(progress.BytesRead)}/{BrowserRow.FormatSize(progress.TotalBytes)}";
         }));
 
     private void OnDragFinished() =>
         Dispatcher.BeginInvoke(new Action(() =>
         {
+            _activeDrag = null;
             ProgressPanel.Visibility = Visibility.Collapsed;
-            StatusRight.Text = "拖拽完成（全程未产生临时文件）";
+            StatusRight.Text = "拖拽完成";
             UpdateCounts();
         }));
 
@@ -1426,9 +1448,9 @@ public partial class MainWindow : Window
         ProgressPanel.Visibility = Visibility.Visible;
         ProgressBar.Value = 0;
         ProgressPercent.Text = "0%";
-        ProgressDetail.Text = $"正在为拖拽解码 {files.Count} 个文件…";
+        ProgressDetail.Text = $"正在准备拖拽（{files.Count} 个文件），松手后解压到目标位置…";
         CancelButton.IsEnabled = false;
-        StatusRight.Text = $"拖出 {files.Count} 个文件…（目标文件由资源管理器现场创建，不经过临时文件）";
+        StatusRight.Text = $"拖出 {files.Count} 个文件…";
     }
 
     // =====================================================================
@@ -1521,6 +1543,7 @@ public partial class MainWindow : Window
         var initial = _archive is null && _folder.Length > 0 ? _folder : null;
         new RenameWindow(initial) { Owner = this }.ShowDialog();
     }
+
 
     private async void OnExtractToClick(object sender, RoutedEventArgs e)
     {

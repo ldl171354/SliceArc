@@ -3,7 +3,7 @@
 ; registers right-click context menu (HKCU), and provides an uninstaller.
 ; No admin rights required.
 
-#define MyAppVersion "0.4.6"
+#define MyAppVersion "0.4.7"
 #define MyAppName "极限压缩"
 #define MyAppExeName "SliceArc.App.exe"
 #define MyAppPublisher "LD"
